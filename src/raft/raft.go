@@ -79,7 +79,9 @@ type LogEntry struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu sync.Mutex // Lock to protect shared access to this peer's state
+	cv *sync.Cond // the cv for sync producer and consumer
+
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -257,12 +259,21 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	index := -1
-	term := -1
-	isLeader := true
-	// Your code here (2B).
+	if rf.killed() {
+		return -1, -1, false
+	}
+	if rf.roler != LEADER {
+		return -1, -1, false
+	}
 
-	return index, term, isLeader
+	// this is a live leader,
+	// append this command to its log and return
+	// the HBT timer will sync this log to other peers
+	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
+
+	DebugNewCommand(rf)
+
+	return len(rf.log) - 1, rf.currentTerm, true
 }
 
 //
@@ -313,6 +324,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	num_servers := len(peers)
 
 	rf := &Raft{}
+	rf.cv = sync.NewCond(&rf.mu)
+
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
@@ -339,6 +352,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// start ticker goroutine to start elections
 	go rf.election_ticker()
 	go rf.heartbeat_ticker()
+
+	// start async apply goroutine
+	go rf.Applier(applyCh)
 
 	Debug(dInfo, "Start S%d", me)
 

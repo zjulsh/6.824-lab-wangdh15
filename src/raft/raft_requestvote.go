@@ -8,8 +8,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	Debug(dVote, "[S%d:T%d] Receive RequestVote from [S%d:T%d]", rf.me, rf.currentTerm, args.CandidateId, args.Term)
-	defer Debug(dVote, "[S%d:T%d] Reply RequestVote From [S%d:T%d] With [OK %v: T %d]", rf.me, rf.currentTerm, args.CandidateId, args.Term, reply.VoteGranted, reply.Term)
+	Debug(dVote, "S%d T%d Receive RequestVote from [S%d:T%d]", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 
 	curLastLogIndex := len(rf.log) - 1
 	curLastLogTerm := rf.log[curLastLogIndex].Term
@@ -18,7 +17,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// out of date request
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		return
 	} else if args.Term == rf.currentTerm {
 		reply.Term = args.Term
 		// Term equal, check votedFor and log
@@ -45,6 +43,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 		rf.changeToFollower(args.Term)
 	}
+
+	Debug(dVote, "S%d T%d Reply RequestVote From [S%d:T%d] With [OK %v: T %d]", rf.me, rf.currentTerm, args.CandidateId, args.Term, reply.VoteGranted, reply.Term)
 }
 
 //

@@ -35,6 +35,7 @@ func (rf *Raft) heartbeat_ticker() {
 }
 
 func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, prevLogTerm int, entry LogEntry, leaderCommit int) {
+
 	args := AppendEntriesArgs{}
 	reply := AppendEntriesReply{}
 	args.Term = term
@@ -46,6 +47,9 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		args.Entries = append(args.Entries, entry)
 	}
 	args.LeaderCommit = leaderCommit
+
+	Debug(dLog, "S%d T%d Send AppendEntries to S%d, Args is %v", me, term, idx, args)
+
 	ok := rf.sendAppendEntries(idx, &args, &reply)
 	if ok {
 		rf.mu.Lock()
@@ -81,12 +85,19 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		ok_idx := 0
 		for i := 1; i < len(diff); i++ {
 			diff[i] += diff[i-1]
-			if diff[i] > len(diff)/2 {
+			if diff[i]+1 > len(rf.peers)/2 {
 				ok_idx = i
 			}
 		}
-		if rf.log[ok_idx].Term == rf.currentTerm {
+
+		if ok_idx > rf.commitIdx && rf.log[ok_idx].Term == rf.currentTerm {
+			// if there is new commit Log, notify the applier to send
+			Debug(dLog, "S%d at T%d Reset it CI From %d to %d", rf.me, rf.currentTerm, rf.commitIdx, ok_idx)
 			rf.commitIdx = ok_idx
+			// rf.cv.Broadcast()
+		}
+		if rf.commitIdx > rf.lastApplied {
+			rf.cv.Broadcast()
 		}
 	}
 }

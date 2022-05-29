@@ -20,6 +20,23 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// no need to check commitIndex.
 		reply.Success = false
 		reply.Term = args.Term
+
+		// optimzed method from https://thesquareplanet.com/blog/students-guide-to-raft/
+		if args.PrevLogIndex > curLastLogIndex {
+			reply.ConflictIndex = len(rf.log)
+			reply.ConflictTerm = -1
+		} else {
+			reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+			findIdx := args.PrevLogIndex
+			// find the index of the log of conflictTerm
+			for i := args.PrevLogIndex; i > 0; i-- {
+				if rf.log[i-1].Term != reply.ConflictTerm {
+					findIdx = i
+					break
+				}
+			}
+			reply.ConflictIndex = findIdx
+		}
 	} else {
 		// prev match!
 		reply.Success = true

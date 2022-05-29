@@ -114,7 +114,7 @@ func DebugNewCommand(rf *Raft) {
 }
 
 func DebugAfterReceiveAppendEntries(rf *Raft, args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	Debug(dLog, "S%d at T%d Reply AppendEntries From S%d at T%d With [OK: %v T %v]", rf.me, rf.currentTerm, args.LeaderId, args.Term, reply.Success, reply.Term)
+	Debug(dLog, "S%d at T%d Reply AppendEntries From S%d at T%d With [OK: %v T:%v CFT: %d CFI: %d]", rf.me, rf.currentTerm, args.LeaderId, args.Term, reply.Success, reply.Term, reply.ConflictTerm, reply.ConflictIndex)
 	Debug(dLog, "S%d at T%d After Reply AppendEntries. CI:%d LA:%d log is - %v", rf.me, rf.currentTerm, rf.commitIdx, rf.lastApplied, rf.log)
 }
 

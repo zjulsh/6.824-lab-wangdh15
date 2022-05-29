@@ -23,12 +23,6 @@ func (rf *Raft) heartbeat_ticker() {
 
 			logs := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
 			copy(logs, rf.log[rf.nextIndex[i]:])
-			// if rf.nextIndex[i] == len(rf.log) {
-			// 	logs = []LogEntry{LogEntry{-1, nil}}
-			// } else {
-			// 	log := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
-			// 	logEntrySend = rf.log[rf.nextIndex[i]]
-			// }
 			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logs, rf.commitIdx)
 		}
 		rf.ResetHBTimer(false)
@@ -77,8 +71,33 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 			// else means this is out of date reply
 		} else {
 			// does not match
+			// check this is not a out of date request
 			if rf.nextIndex[idx] == prevLogIndex+1 {
-				rf.nextIndex[idx] -= 1
+
+				// optimized method
+				// from https://thesquareplanet.com/blog/students-guide-to-raft/
+				if reply.ConflictTerm == -1 {
+					rf.nextIndex[idx] = reply.ConflictIndex
+				} else {
+					findIdx := -1
+					for i := len(rf.log); i > 0; i-- {
+						if rf.log[i-1].Term == reply.ConflictTerm {
+							findIdx = i
+							break
+						}
+					}
+					if findIdx != -1 {
+						// if find a log of conflict term,
+						// set to the one beyond the index
+						rf.nextIndex[idx] = findIdx
+					} else {
+						// set the nextIdx to the conflict firstLog index of peer's logs
+						rf.nextIndex[idx] = reply.ConflictIndex
+					}
+				}
+
+				// no oprimized method
+				// rf.nextIndex[idx] -= 1
 			}
 		}
 

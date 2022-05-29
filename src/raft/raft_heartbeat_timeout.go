@@ -21,20 +21,22 @@ func (rf *Raft) heartbeat_ticker() {
 				continue
 			}
 
-			var logEntrySend LogEntry
-			if rf.nextIndex[i] == len(rf.log) {
-				logEntrySend = LogEntry{-1, nil}
-			} else {
-				logEntrySend = rf.log[rf.nextIndex[i]]
-			}
-			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logEntrySend, rf.commitIdx)
+			logs := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
+			copy(logs, rf.log[rf.nextIndex[i]:])
+			// if rf.nextIndex[i] == len(rf.log) {
+			// 	logs = []LogEntry{LogEntry{-1, nil}}
+			// } else {
+			// 	log := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
+			// 	logEntrySend = rf.log[rf.nextIndex[i]]
+			// }
+			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logs, rf.commitIdx)
 		}
 		rf.ResetHBTimer(false)
 		rf.mu.Unlock()
 	}
 }
 
-func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, prevLogTerm int, entry LogEntry, leaderCommit int) {
+func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, prevLogTerm int, logs []LogEntry, leaderCommit int) {
 
 	args := AppendEntriesArgs{}
 	reply := AppendEntriesReply{}
@@ -42,10 +44,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 	args.LeaderId = me
 	args.PrevLogIndex = prevLogIndex
 	args.PrevLogTerm = prevLogTerm
-	args.Entries = make([]LogEntry, 0)
-	if entry.Term != -1 {
-		args.Entries = append(args.Entries, entry)
-	}
+	args.Entries = logs
 	args.LeaderCommit = leaderCommit
 
 	Debug(dLog, "S%d T%d Send AppendEntries to S%d, Args is %v", me, term, idx, args)
@@ -55,11 +54,21 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		// check term
+
 		if reply.Term > rf.currentTerm {
 			rf.changeToFollower(reply.Term)
 			return
 		}
 		if reply.Success {
+
+			if len(args.Entries) == 0 {
+				// this is a hearbeat, no porcess.
+				// if process, after send this rpc, leader
+				// receive new command, the leader whill think alreay
+				// receive the new command.
+				return
+			}
+
 			// update nextIndex
 			if rf.nextIndex[idx] == prevLogIndex+1 {
 				rf.nextIndex[idx] = min(rf.nextIndex[idx]+1, len(rf.log))

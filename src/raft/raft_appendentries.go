@@ -16,6 +16,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	curLastLogIndex := len(rf.log) - 1
 
 	if args.PrevLogIndex > curLastLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		// if prev doesn't match, return false immediately.
+		// no need to check commitIndex.
 		reply.Success = false
 		reply.Term = args.Term
 	} else {
@@ -36,14 +38,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// 2. this rpc1 timeout, resend rpc2
 		// 3. receive rpc2, process
 		// 4. receive rpc1, the prev match and the new one match(rpc2 update the newont)
-	}
-	if args.LeaderCommit > rf.commitIdx {
-		rf.commitIdx = min(args.LeaderCommit, len(rf.log)-1)
-	}
 
-	if rf.commitIdx > rf.lastApplied {
-		// nofity applier
-		rf.cv.Broadcast()
+		if args.LeaderCommit > rf.commitIdx {
+			rf.commitIdx = min(args.LeaderCommit, len(rf.log)-1)
+		}
+
+		if rf.commitIdx > rf.lastApplied {
+			// nofity applier
+			rf.cv.Broadcast()
+		}
 	}
 
 	if args.Term > rf.currentTerm || rf.roler != FOLLOWER {

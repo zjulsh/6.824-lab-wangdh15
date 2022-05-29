@@ -37,7 +37,7 @@ func (rf *Raft) changeToCandidate() {
 		if i == rf.me {
 			continue
 		}
-		go rf.CallForVote(i, rf.currentTerm)
+		go rf.CallForVote(i, rf.currentTerm, len(rf.log)-1, rf.log[len(rf.log)-1].Term)
 	}
 	rf.ResetElectionTimer()
 }

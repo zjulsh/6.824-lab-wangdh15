@@ -19,11 +19,13 @@ func (rf *Raft) election_ticker() {
 	Debug(dInfo, "S%d ELT Goroutine Exist!", rf.me)
 }
 
-func (rf *Raft) CallForVote(idx, term int) {
+func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 	args := RequestVoteArgs{}
 	reply := RequestVoteReply{}
 	args.Term = term
 	args.CandidateId = rf.me
+	args.LastLogIndex = lastLogIndex
+	args.LastLogTerm = lastLogTerm
 	ok := rf.sendRequestVote(idx, &args, &reply)
 
 	// following the instruction of TA

@@ -71,7 +71,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 
 			// update nextIndex
 			if rf.nextIndex[idx] == prevLogIndex+1 {
-				rf.nextIndex[idx] = min(rf.nextIndex[idx]+1, len(rf.log))
+				rf.nextIndex[idx] = min(rf.nextIndex[idx]+len(logs), len(rf.log))
 				rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 			}
 			// else means this is out of date reply

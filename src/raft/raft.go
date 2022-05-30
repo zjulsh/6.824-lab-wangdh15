@@ -20,12 +20,13 @@ package raft
 import (
 	//	"bytes"
 
+	"bytes"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -145,6 +146,15 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
+	Debug(dPersist, "S%d Persist States. T%d, votedFor:%d, log: %v", rf.me,
+		rf.currentTerm, rf.votedFor, rf.log)
 }
 
 //
@@ -167,6 +177,22 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var log []LogEntry
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&log) != nil {
+		Debug(dError, "S%d Read Persist Error!", rf.me)
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.log = log
+		Debug(dPersist, "S%d ReadPersist. State: T%d, votedFor%d, log: %v", rf.me,
+			rf.currentTerm, rf.votedFor, rf.log)
+	}
 }
 
 // reset Election
@@ -272,6 +298,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// append this command to its log and return
 	// the HBT timer will sync this log to other peers
 	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
+	rf.persist()
 
 	DebugNewCommand(rf)
 

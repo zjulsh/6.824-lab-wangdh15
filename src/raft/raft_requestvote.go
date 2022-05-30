@@ -22,10 +22,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// Term equal, check votedFor and log
 		if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && (args.LastLogTerm > curLastLogTerm || args.LastLogTerm == curLastLogTerm && args.LastLogIndex >= curLastLogIndex) {
 			reply.VoteGranted = true
+			rf.votedFor = args.CandidateId
 			if rf.roler != FOLLOWER {
 				rf.changeToFollower(args.Term)
 			} else {
 				rf.ResetElectionTimer()
+				rf.persist()
 			}
 		} else {
 			reply.VoteGranted = false

@@ -4,6 +4,7 @@ package raft
 func (rf *Raft) changeToFollower(new_term int) {
 	rf.roler = FOLLOWER
 	rf.currentTerm = new_term
+	rf.persist()
 	// reset election timeout timer
 	rf.ResetElectionTimer()
 }
@@ -33,6 +34,7 @@ func (rf *Raft) changeToCandidate() {
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.receiveVoteNum = 1
+	rf.persist()
 	for i := range rf.peers {
 		if i == rf.me {
 			continue

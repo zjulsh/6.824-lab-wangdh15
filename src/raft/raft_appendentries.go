@@ -41,13 +41,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// prev match!
 		reply.Success = true
 		reply.Term = args.Term
-		if len(args.Entries) > 0 && (curLastLogIndex < args.PrevLogIndex+1 || rf.log[args.PrevLogIndex+1].Term != args.Entries[0].Term) {
+		if len(args.Entries) > 0 {
+			var last_match_idx = args.PrevLogIndex
+			for i := 1; i <= len(args.Entries) && args.PrevLogIndex+i < len(rf.log); i++ {
+				if args.Entries[i-1].Term == rf.log[args.PrevLogIndex+i].Term {
+					last_match_idx = args.PrevLogIndex + i
+				} else {
+					break
+				}
+			}
 			// new one not match, delete remain log and append all entries
 			// the requirements is:
 			// 1. have new entry
 			// 2. the new entry is not in this logs or the log.Term doesn't match
-			rf.log = rf.log[0 : args.PrevLogIndex+1]
-			rf.log = append(rf.log, args.Entries...)
+			rf.log = rf.log[0 : last_match_idx+1]
+			rf.log = append(rf.log, args.Entries[last_match_idx-args.PrevLogIndex:]...)
+			rf.persist()
 		}
 		// no new one or new one is matched, do nothing.
 		// this can  happen when receive the out of date RPC

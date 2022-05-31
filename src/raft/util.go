@@ -79,13 +79,14 @@ func DebugToLeader(s, term, num int) {
 	Debug(dLeader, "S%d Receive Majority for T%d (%d), converting to Leader", s, term, num)
 }
 
+// become to follower
+func DebugToFollower(rf *Raft, new_term int) {
+	Debug(dTrace, "S%d Change State From [L:%d] To [F:%d]", rf.me, rf.currentTerm, new_term)
+}
+
 // election timeout
 func DebugELT(s, term int) {
 	Debug(dTimer, "S%d Election Timeout, Begin Election for T%d", s, term)
-}
-
-func DebugSendHB(s1, term int) {
-	Debug(dTimer, "S%d at T%d Send HB", s1, term)
 }
 
 func DebugReceiveHB(s1, s2, term int) {
@@ -105,8 +106,8 @@ func DebugResetELT(rf *Raft) {
 	Debug(dTimer, "S%d at T%d Reset ELT to %06d", rf.me, rf.currentTerm, rf.ElectionExpireTime.Sub(debugStart).Microseconds()/100)
 }
 
-func DebugResetHBT(rf *Raft) {
-	Debug(dTimer, "S%d at T%d Reset HBT to %06d", rf.me, rf.currentTerm, rf.HeartBeatExpireTime.Sub(debugStart).Microseconds()/100)
+func DebugResetHBT(rf *Raft, idx int) {
+	Debug(dTimer, "S%d at T%d Reset HBT to %06d", rf.me, rf.currentTerm, rf.AppendExpireTime[idx].Sub(debugStart).Microseconds()/100)
 }
 
 func DebugNewCommand(rf *Raft) {

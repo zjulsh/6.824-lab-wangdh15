@@ -7,25 +7,27 @@ func (rf *Raft) heartbeat_ticker() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
 		// time.Sleep().
-		time.Sleep(TIMER_RESOLUTION * time.Millisecond)
+		time.Sleep(APPEND_TIMER_RESOLUTION * time.Millisecond)
 		rf.mu.Lock()
-		if !time.Now().After(rf.HeartBeatExpireTime) || rf.roler != LEADER {
+		// check roler
+		if rf.roler != LEADER {
 			rf.mu.Unlock()
 			continue
 		}
-
-		// heartbeat timeout, send!
-		DebugSendHB(rf.me, rf.currentTerm)
+		// check the append timer of every peers
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
 			}
-
+			if !time.Now().After(rf.AppendExpireTime[i]) {
+				continue
+			}
+			// send appendEntry to peers_i
 			logs := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
 			copy(logs, rf.log[rf.nextIndex[i]:])
 			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logs, rf.commitIdx)
+			rf.ResetAppendTimer(i, false)
 		}
-		rf.ResetHBTimer(false)
 		rf.mu.Unlock()
 	}
 }
@@ -47,85 +49,95 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		// check term
-
-		if reply.Term > rf.currentTerm {
-			rf.changeToFollower(reply.Term)
+		// check roler
+		if rf.roler != LEADER {
 			return
 		}
+		// check term replyTerm and curTerm
+		if reply.Term < rf.currentTerm {
+			return
+		}
+		if reply.Term > rf.currentTerm {
+			rf.changeToFollower(reply.Term)
+			rf.ResetElectionTimer()
+			return
+		}
+		// check argsTerm and curTerm
+		// something will happen. when this leader sent x in term i
+		// then this leader become leader of term i + 2
+		// other server at term i + 2 receive this message
+		// and reply with false, but it is a outof date reply
+		if args.Term != rf.currentTerm {
+			return
+		}
+		// check rf.nextIndex and args.PrevLogIndex to filter out of date reply
+		if rf.nextIndex[idx] != args.PrevLogIndex+1 {
+			return
+		}
+
+		// when reach here, the following condition is ok:
+		// reply.Term == rf.curTerm == args.Term
+		// rf.nextIndex[idx] == args.PrevLogIndex + 1
+		// means this is not a out of date reply
 		if reply.Success {
+			// update the nextIndex and matchIndex
+			rf.nextIndex[idx] = rf.nextIndex[idx] + len(logs)
+			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 
-			if len(args.Entries) == 0 {
-				// this is a hearbeat, no porcess.
-				// if process, after send this rpc, leader
-				// receive new command, the leader whill think alreay
-				// receive the new command.
-				return
+			// check whether can update commitIndex
+			diff := make([]int, len(rf.log)+5)
+			for i := 0; i < len(rf.peers); i++ {
+				if i == rf.me {
+					continue
+				}
+				diff[0] += 1
+				diff[rf.matchIndex[i]+1] -= 1
+			}
+			ok_idx := 0
+			for i := 1; i < len(diff); i++ {
+				diff[i] += diff[i-1]
+				if diff[i]+1 > len(rf.peers)/2 {
+					ok_idx = i
+				}
 			}
 
-			// update nextIndex
-			if rf.nextIndex[idx] == prevLogIndex+1 {
-				rf.nextIndex[idx] = min(rf.nextIndex[idx]+len(logs), len(rf.log))
-				rf.matchIndex[idx] = rf.nextIndex[idx] - 1
+			if ok_idx > rf.commitIdx && rf.log[ok_idx].Term == rf.currentTerm {
+				// if there is new commit Log, notify the applier to send
+				Debug(dLog, "S%d at T%d Reset it CI From %d to %d", rf.me, rf.currentTerm, rf.commitIdx, ok_idx)
+				rf.commitIdx = ok_idx
 			}
-			// else means this is out of date reply
+			if rf.commitIdx > rf.lastApplied {
+				rf.cv.Broadcast()
+			}
 		} else {
-			// does not match
-			// check this is not a out of date request
-			if rf.nextIndex[idx] == prevLogIndex+1 {
-
-				// optimized method
-				// from https://thesquareplanet.com/blog/students-guide-to-raft/
-				if reply.ConflictTerm == -1 {
-					rf.nextIndex[idx] = reply.ConflictIndex
-				} else {
-					findIdx := -1
-					for i := len(rf.log); i > 0; i-- {
-						if rf.log[i-1].Term == reply.ConflictTerm {
-							findIdx = i
-							break
-						}
-					}
-					if findIdx != -1 {
-						// if find a log of conflict term,
-						// set to the one beyond the index
-						rf.nextIndex[idx] = findIdx
-					} else {
-						// set the nextIdx to the conflict firstLog index of peer's logs
-						rf.nextIndex[idx] = reply.ConflictIndex
+			// optimized method
+			// from https://thesquareplanet.com/blog/students-guide-to-raft/
+			if reply.ConflictTerm == -1 {
+				rf.nextIndex[idx] = reply.ConflictIndex
+			} else {
+				findIdx := -1
+				for i := len(rf.log); i > 0; i-- {
+					if rf.log[i-1].Term == reply.ConflictTerm {
+						findIdx = i
+						break
 					}
 				}
-
-				// no oprimized method
-				// rf.nextIndex[idx] -= 1
+				if findIdx != -1 {
+					// if find a log of conflict term,
+					// set to the one beyond the index
+					rf.nextIndex[idx] = findIdx
+				} else {
+					// set the nextIdx to the conflict firstLog index of peer's logs
+					rf.nextIndex[idx] = reply.ConflictIndex
+				}
 			}
 		}
 
-		// check whether can update commitIndex
-		diff := make([]int, len(rf.log)+5)
-		for i := 0; i < len(rf.peers); i++ {
-			if i == rf.me {
-				continue
-			}
-			diff[0] += 1
-			diff[rf.matchIndex[i]+1] -= 1
-		}
-		ok_idx := 0
-		for i := 1; i < len(diff); i++ {
-			diff[i] += diff[i-1]
-			if diff[i]+1 > len(rf.peers)/2 {
-				ok_idx = i
-			}
-		}
-
-		if ok_idx > rf.commitIdx && rf.log[ok_idx].Term == rf.currentTerm {
-			// if there is new commit Log, notify the applier to send
-			Debug(dLog, "S%d at T%d Reset it CI From %d to %d", rf.me, rf.currentTerm, rf.commitIdx, ok_idx)
-			rf.commitIdx = ok_idx
-			// rf.cv.Broadcast()
-		}
-		if rf.commitIdx > rf.lastApplied {
-			rf.cv.Broadcast()
+		// whether suc of not, if the nextIndex[idx] is not the len(rf.log)
+		// means this follower log is not matched, seend appendEntry to this
+		// peer immediately
+		if rf.nextIndex[idx] != len(rf.log) {
+			rf.ResetAppendTimer(idx, true)
 		}
 	}
 }

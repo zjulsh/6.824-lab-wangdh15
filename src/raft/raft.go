@@ -21,7 +21,6 @@ import (
 	//	"bytes"
 
 	"bytes"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,12 +50,13 @@ const (
 var roler_string map[int]string
 
 const (
-	TIMER_RESOLUTION = 5 // check whether timer expire every 5 millisecond.
+	ELECTION_TIMER_RESOLUTION = 5 // check whether timer expire every 5 millisecond.
 	// vote expire time range. (millsecond)
-	VOTE_EXPIRE_LEFT  = 200
-	VOTE_EXPIRE_RIGHT = 300
+	ELECTION_EXPIRE_LEFT  = 200
+	ELECTION_EXPIRE_RIGHT = 400
 	// heartbeat time (millsecond)
-	APPEND_EXPIRE_TIME = 100
+	APPEND_EXPIRE_TIME      = 100
+	APPEND_TIMER_RESOLUTION = 2
 )
 
 type ApplyMsg struct {
@@ -95,8 +95,8 @@ type Raft struct {
 
 	roler int
 
-	ElectionExpireTime  time.Time // election expire time
-	HeartBeatExpireTime time.Time // next send heartbeat time
+	ElectionExpireTime time.Time   // election expire time
+	AppendExpireTime   []time.Time // next send append time
 
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
@@ -197,18 +197,18 @@ func (rf *Raft) readPersist(data []byte) {
 
 // reset Election
 func (rf *Raft) ResetElectionTimer() {
-	rf.ElectionExpireTime = GetRandomExpireTime(VOTE_EXPIRE_LEFT, VOTE_EXPIRE_RIGHT)
+	rf.ElectionExpireTime = GetRandomExpireTime(ELECTION_EXPIRE_LEFT, ELECTION_EXPIRE_RIGHT)
 	DebugResetELT(rf)
 }
 
 // reset heartBeat, imme mean whether send immediately
-func (rf *Raft) ResetHBTimer(imme bool) {
+func (rf *Raft) ResetAppendTimer(idx int, imme bool) {
 	t := time.Now()
 	if !imme {
 		t = t.Add(APPEND_EXPIRE_TIME * time.Millisecond)
 	}
-	rf.HeartBeatExpireTime = t
-	DebugResetHBT(rf)
+	rf.AppendExpireTime[idx] = t
+	DebugResetHBT(rf, idx)
 }
 
 //
@@ -297,11 +297,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// this is a live leader,
 	// append this command to its log and return
 	// the HBT timer will sync this log to other peers
+	DebugNewCommand(rf)
 	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
 	rf.persist()
-
-	DebugNewCommand(rf)
-
 	return len(rf.log) - 1, rf.currentTerm, true
 }
 
@@ -348,7 +346,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// set rand seed, copy code from
 	// https: //pkg.go.dev/math/rand
-	rand.Seed(time.Now().UnixNano())
+	// rand.Seed(time.Now().UnixNano())
 
 	num_servers := len(peers)
 
@@ -368,7 +366,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.roler = FOLLOWER
 
 	rf.ResetElectionTimer()
-	rf.ResetHBTimer(false)
+	rf.AppendExpireTime = make([]time.Time, num_servers)
+	for i := 0; i < num_servers; i++ {
+		rf.ResetAppendTimer(i, false)
+	}
 
 	rf.nextIndex = make([]int, num_servers)
 	rf.matchIndex = make([]int, num_servers)

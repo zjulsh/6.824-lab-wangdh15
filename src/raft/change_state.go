@@ -2,11 +2,10 @@ package raft
 
 // this function need rf.mu is hold
 func (rf *Raft) changeToFollower(new_term int) {
+	DebugToFollower(rf, new_term)
 	rf.roler = FOLLOWER
 	rf.currentTerm = new_term
 	rf.persist()
-	// reset election timeout timer
-	rf.ResetElectionTimer()
 }
 
 // this funciton need rf.mu is hold
@@ -23,23 +22,13 @@ func (rf *Raft) changeToLeader() {
 		rf.nextIndex[i] = len(rf.log)
 		rf.matchIndex[i] = 0
 	}
-	// reset all hearbeat timer to send heartbeat immediately
-	rf.ResetHBTimer(true)
 }
 
 // this function need rf.mu is hole
-// changeToCandidate alse mean start new election
 func (rf *Raft) changeToCandidate() {
 	rf.roler = CANDIDATE
 	rf.currentTerm += 1
 	rf.votedFor = rf.me
 	rf.receiveVoteNum = 1
 	rf.persist()
-	for i := range rf.peers {
-		if i == rf.me {
-			continue
-		}
-		go rf.CallForVote(i, rf.currentTerm, len(rf.log)-1, rf.log[len(rf.log)-1].Term)
-	}
-	rf.ResetElectionTimer()
 }

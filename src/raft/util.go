@@ -1,12 +1,15 @@
 package raft
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"strconv"
 	"time"
+
+	"6.824/labgob"
 )
 
 type logTopic string
@@ -140,4 +143,13 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func SerizeState(rf *Raft) []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	return w.Bytes()
 }

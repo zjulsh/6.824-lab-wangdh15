@@ -72,8 +72,33 @@ type ApplyMsg struct {
 }
 
 type LogEntry struct {
+	Index   int
 	Term    int
 	Command interface{}
+}
+
+func (rf *Raft) getFirstIndex() int {
+	return rf.log[0].Index
+}
+
+func (rf *Raft) getFirstTerm() int {
+	return rf.log[0].Term
+}
+
+func (rf *Raft) getLastTerm() int {
+	return rf.log[len(rf.log)-1].Term
+}
+
+func (rf *Raft) getLastIndex() int {
+	return rf.log[len(rf.log)-1].Index
+}
+
+func (rf *Raft) getTermByIndex(idx int) int {
+	return rf.log[idx-rf.getFirstIndex()].Term
+}
+
+func (rf *Raft) getCommandByIndex(idx int) interface{} {
+	return rf.log[idx-rf.getFirstIndex()].Command
 }
 
 //
@@ -119,6 +144,9 @@ type Raft struct {
 	// the matchIndex changes with nextIndex
 	// and it influences the update of commitIndex
 	matchIndex []int
+
+	// applyQueue
+	applyQueue []ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -146,12 +174,7 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.log)
-	data := w.Bytes()
+	data := SerizeState(rf)
 	rf.persister.SaveRaftState(data)
 	Debug(dPersist, "S%d Persist States. T%d, votedFor:%d, log: %v", rf.me,
 		rf.currentTerm, rf.votedFor, rf.log)
@@ -297,10 +320,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// this is a live leader,
 	// append this command to its log and return
 	// the HBT timer will sync this log to other peers
+	rf.log = append(rf.log, LogEntry{
+		Index:   rf.getLastIndex() + 1,
+		Term:    rf.currentTerm,
+		Command: command,
+	})
 	DebugNewCommand(rf)
-	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
 	rf.persist()
-	return len(rf.log) - 1, rf.currentTerm, true
+	return rf.getLastIndex(), rf.currentTerm, true
 }
 
 //
@@ -374,6 +401,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.nextIndex = make([]int, num_servers)
 	rf.matchIndex = make([]int, num_servers)
 
+	rf.applyQueue = make([]ApplyMsg, 0)
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash

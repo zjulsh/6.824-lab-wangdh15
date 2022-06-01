@@ -22,10 +22,15 @@ func (rf *Raft) heartbeat_ticker() {
 			if !time.Now().After(rf.AppendExpireTime[i]) {
 				continue
 			}
-			// send appendEntry to peers_i
-			logs := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
-			copy(logs, rf.log[rf.nextIndex[i]:])
-			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logs, rf.commitIdx)
+			if rf.nextIndex[i] <= rf.getFirstIndex() {
+				// need to send installSnapshot RPC
+				// TODO
+			} else {
+				// send appendEntry to peers_i
+				logs := make([]LogEntry, rf.getLastIndex()+1-rf.nextIndex[i])
+				copy(logs, rf.log[rf.nextIndex[i]-rf.getFirstIndex():])
+				go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.getTermByIndex(rf.nextIndex[i]-1), logs, rf.commitIdx)
+			}
 			rf.ResetAppendTimer(i, false)
 		}
 		rf.mu.Unlock()
@@ -49,10 +54,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		// check roler
-		if rf.roler != LEADER {
-			return
-		}
+
 		// check term replyTerm and curTerm
 		if reply.Term < rf.currentTerm {
 			return
@@ -60,6 +62,11 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		if reply.Term > rf.currentTerm {
 			rf.changeToFollower(reply.Term)
 			rf.ResetElectionTimer()
+			return
+		}
+
+		// check roler
+		if rf.roler != LEADER {
 			return
 		}
 		// check argsTerm and curTerm
@@ -85,7 +92,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 
 			// check whether can update commitIndex
-			diff := make([]int, len(rf.log)+5)
+			diff := make([]int, rf.getLastIndex()+5)
 			for i := 0; i < len(rf.peers); i++ {
 				if i == rf.me {
 					continue
@@ -104,9 +111,14 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 			if ok_idx > rf.commitIdx && rf.log[ok_idx].Term == rf.currentTerm {
 				// if there is new commit Log, notify the applier to send
 				Debug(dLog, "S%d at T%d Reset it CI From %d to %d", rf.me, rf.currentTerm, rf.commitIdx, ok_idx)
+				for i := rf.commitIdx + 1; i <= ok_idx; i++ {
+					rf.applyQueue = append(rf.applyQueue, ApplyMsg{
+						CommandValid: true,
+						CommandIndex: i,
+						Command:      rf.getCommandByIndex(i),
+					})
+				}
 				rf.commitIdx = ok_idx
-			}
-			if rf.commitIdx > rf.lastApplied {
 				rf.cv.Broadcast()
 			}
 		} else {
@@ -116,8 +128,8 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 				rf.nextIndex[idx] = reply.ConflictIndex
 			} else {
 				findIdx := -1
-				for i := len(rf.log); i > 0; i-- {
-					if rf.log[i-1].Term == reply.ConflictTerm {
+				for i := rf.getLastIndex() + 1; i > rf.getFirstIndex(); i-- {
+					if rf.getTermByIndex(i-1) == reply.ConflictTerm {
 						findIdx = i
 						break
 					}
@@ -136,7 +148,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		// whether suc of not, if the nextIndex[idx] is not the len(rf.log)
 		// means this follower log is not matched, seend appendEntry to this
 		// peer immediately
-		if rf.nextIndex[idx] != len(rf.log) {
+		if rf.nextIndex[idx] != rf.getLastIndex()+1 {
 			rf.ResetAppendTimer(idx, true)
 		}
 	}

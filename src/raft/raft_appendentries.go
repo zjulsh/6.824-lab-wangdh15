@@ -14,10 +14,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	// if args.Term >= curTerm, can do the following things.
-	curLastLogIndex := len(rf.log) - 1
+	curLastLogIndex := rf.getLastIndex()
+	curFirstLogIndex := rf.getFirstIndex()
 
-	// check prevIndex and prevTerm
-	if args.PrevLogIndex > curLastLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+	if args.PrevLogIndex < curFirstLogIndex {
+		// want to match a log in snapshot
+		// normally this will not happen,
+		// but if the latency is high, this may happen
+		// TODO how to process!
+	} else if args.PrevLogIndex > curLastLogIndex || rf.getTermByIndex(args.PrevLogIndex) != args.PrevLogTerm { // check prevIndex and prevTerm
 		// if prev doesn't match, return false immediately.
 		// no need to check commitIndex.
 		reply.Success = false
@@ -25,13 +30,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		// optimzed method from https://thesquareplanet.com/blog/students-guide-to-raft/
 		if args.PrevLogIndex > curLastLogIndex {
-			reply.ConflictIndex = len(rf.log)
+			reply.ConflictIndex = rf.getLastIndex() + 1
 			reply.ConflictTerm = -1
 		} else {
-			reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+			reply.ConflictTerm = rf.getTermByIndex(args.PrevLogIndex)
 			findIdx := args.PrevLogIndex
 			// find the index of the log of conflictTerm
-			for i := args.PrevLogIndex; i > 0; i-- {
+			for i := args.PrevLogIndex; i > rf.getFirstIndex(); i-- {
 				if rf.log[i-1].Term != reply.ConflictTerm {
 					findIdx = i
 					break
@@ -49,7 +54,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if args.PrevLogIndex+1+i > curLastLogIndex {
 				break
 			}
-			if rf.log[args.PrevLogIndex+1+i].Term != args.Entries[i].Term {
+			if rf.getTermByIndex(args.PrevLogIndex+1+i) != args.Entries[i].Term {
 				break
 			}
 			last_match_idx = args.PrevLogIndex + 1 + i
@@ -57,44 +62,24 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 		if last_match_idx-args.PrevLogIndex != len(args.Entries) {
 			// partially match
-			rf.log = rf.log[0 : last_match_idx+1]
+			rf.log = rf.log[0 : last_match_idx+1-rf.getFirstIndex()]
 			rf.log = append(rf.log, args.Entries[last_match_idx-args.PrevLogIndex:]...)
 			rf.persist()
 		}
-		// if args.Entries all match, do notiong!, donot delete the remain log
-		// is rf.logs, because this request may be a out of date request!
-
-		// if len(args.Entries) > 0 {
-		// 	var last_match_idx = args.PrevLogIndex
-		// 	for i := 1; i <= len(args.Entries) && args.PrevLogIndex+i < len(rf.log); i++ {
-		// 		if args.Entries[i-1].Term == rf.log[args.PrevLogIndex+i].Term {
-		// 			last_match_idx = args.PrevLogIndex + i
-		// 		} else {
-		// 			break
-		// 		}
-		// 	}
-		// 	// new one not match, delete remain log and append all entries
-		// 	// the requirements is:
-		// 	// 1. have new entry
-		// 	// 2. the new entry is not in this logs or the log.Term doesn't match
-		// 	rf.log = rf.log[0 : last_match_idx+1]
-		// 	rf.log = append(rf.log, args.Entries[last_match_idx-args.PrevLogIndex:]...)
-		// 	rf.persist()
-		// }
-		// no new one or new one is matched, do nothing.
-		// this can  happen when receive the out of date RPC
-		// 1. send this rpc1 first
-		// 2. this rpc1 timeout, resend rpc2
-		// 3. receive rpc2, process
-		// 4. receive rpc1, the prev match and the new one match(rpc2 update the newont)
 
 		// this must check, because may receive a out of data request with small commitIdx
+		old_commit_index := rf.commitIdx
 		if args.LeaderCommit > rf.commitIdx {
-			rf.commitIdx = min(args.LeaderCommit, len(rf.log)-1)
+			rf.commitIdx = min(args.LeaderCommit, rf.getLastIndex())
 		}
-
-		if rf.commitIdx > rf.lastApplied {
-			// nofity applier
+		if rf.commitIdx > old_commit_index {
+			for i := old_commit_index + 1; i <= rf.commitIdx; i++ {
+				rf.applyQueue = append(rf.applyQueue, ApplyMsg{
+					CommandValid: true,
+					CommandIndex: i,
+					Command:      rf.getCommandByIndex(i),
+				})
+			}
 			rf.cv.Broadcast()
 		}
 	}

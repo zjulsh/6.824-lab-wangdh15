@@ -10,8 +10,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	Debug(dVote, "S%d T%d Receive RequestVote from [S%d:T%d]", rf.me, rf.currentTerm, args.CandidateId, args.Term)
 
-	curLastLogIndex := len(rf.log) - 1
-	curLastLogTerm := rf.log[curLastLogIndex].Term
+	curLastLogIndex := rf.getLastIndex()
+	curLastLogTerm := rf.getLastTerm()
 
 	if args.Term < rf.currentTerm {
 		// out of date request

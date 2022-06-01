@@ -42,12 +42,7 @@ func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		// check current roler
-		if rf.roler != CANDIDATE {
-			// have change to leader or follower,
-			// then the requestVote reply is ignored
-			return
-		}
+
 		// check relyTerm and curTem
 		if reply.Term < rf.currentTerm {
 			return
@@ -58,6 +53,13 @@ func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 			// change self to follower
 			rf.changeToFollower(reply.Term)
 			rf.ResetElectionTimer()
+			return
+		}
+
+		// check current roler
+		if rf.roler != CANDIDATE {
+			// have change to leader or follower,
+			// then the requestVote reply is ignored
 			return
 		}
 

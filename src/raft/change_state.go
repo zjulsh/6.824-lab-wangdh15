@@ -4,6 +4,9 @@ package raft
 func (rf *Raft) changeToFollower(new_term int) {
 	DebugToFollower(rf, new_term)
 	rf.roler = FOLLOWER
+	if new_term > rf.currentTerm {
+		rf.votedFor = -1
+	}
 	rf.currentTerm = new_term
 	rf.persist()
 }
@@ -19,7 +22,7 @@ func (rf *Raft) changeToLeader() {
 	// TODO initialize some state? nextId MatchID etc.
 	// initialized the nextIndex[] and matchIndex[]
 	for i := 0; i < len(rf.peers); i++ {
-		rf.nextIndex[i] = len(rf.log)
+		rf.nextIndex[i] = rf.getLastIndex() + 1
 		rf.matchIndex[i] = 0
 	}
 }

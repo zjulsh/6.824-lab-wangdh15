@@ -20,7 +20,7 @@ func (rf *Raft) election_ticker() {
 				if i == rf.me {
 					continue
 				}
-				go rf.CallForVote(i, rf.currentTerm, len(rf.log)-1, rf.log[len(rf.log)-1].Term)
+				go rf.CallForVote(i, rf.currentTerm, rf.getLastIndex(), rf.getLastTerm())
 			}
 		}
 		rf.mu.Unlock()

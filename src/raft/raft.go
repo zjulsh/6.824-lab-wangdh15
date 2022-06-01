@@ -73,6 +73,7 @@ type ApplyMsg struct {
 
 type LogEntry struct {
 	Term    int
+	Index   int
 	Command interface{}
 }
 
@@ -119,6 +120,9 @@ type Raft struct {
 	// the matchIndex changes with nextIndex
 	// and it influences the update of commitIndex
 	matchIndex []int
+
+	// async apply committed log or snapshot!
+	commitQueue []ApplyMsg
 }
 
 // return currentTerm and whether this server
@@ -146,12 +150,7 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.log)
-	data := w.Bytes()
+	data := SerilizeState(rf)
 	rf.persister.SaveRaftState(data)
 	Debug(dPersist, "S%d Persist States. T%d, votedFor:%d, log: %v", rf.me,
 		rf.currentTerm, rf.votedFor, rf.log)
@@ -216,9 +215,6 @@ func (rf *Raft) ResetAppendTimer(idx int, imme bool) {
 // have more recent info since it communicate the snapshot on applyCh.
 //
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
-	// Your code here (2D).
-
 	return true
 }
 
@@ -228,7 +224,28 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	Debug(dSnap, "S%d at T%d GetAPP IDX:%d, SnapShot: %v", rf.me, rf.currentTerm, index, snapshot)
+	// check the parameters
+	if index <= rf.getFirstIndex() {
+		Debug(dError, "S%d Application Set out of date snapshot!, Index: %d, FirstIndex: %d", rf.me, index, rf.getFirstIndex())
+		return
+	}
+
+	firstLogIndex := rf.getFirstIndex()
+	lastLogIndex := rf.getLastIndex()
+	old_log := rf.log
+	rf.log = make([]LogEntry, lastLogIndex-index+1)
+	copy(rf.log, old_log[index-firstLogIndex:])
+	rf.log[0].Command = nil // delete the first dummy command
+
+	state_serilize_result := SerilizeState(rf)
+
+	rf.persister.SaveStateAndSnapshot(state_serilize_result, snapshot)
+	Debug(dPersist, "S%d Persiste Snapshot Before Index: %d", rf.me, index)
+	Debug(dSnap, "S%d at T%d After GetAPP, log is %v", rf.me, rf.currentTerm, rf.log)
 }
 
 //
@@ -269,6 +286,38 @@ type AppendEntriesReply struct {
 	ConflictIndex int
 }
 
+// get the first dummy log index
+func (rf *Raft) getFirstIndex() int {
+	return rf.log[0].Index
+}
+
+// get the first dummy log term
+func (rf *Raft) getFirstTerm() int {
+	return rf.log[0].Term
+}
+
+// get the last log term
+func (rf *Raft) getLastTerm() int {
+	return rf.log[len(rf.log)-1].Term
+}
+
+// get the last log index
+func (rf *Raft) getLastIndex() int {
+	return rf.log[len(rf.log)-1].Index
+}
+
+// get the Term of index
+// compute the location in log and return the result
+func (rf *Raft) getTermForIndex(index int) int {
+	return rf.log[index-rf.getFirstIndex()].Term
+}
+
+// get the command of index
+// compute the location in log and return the result
+func (rf *Raft) getCommand(index int) interface{} {
+	return rf.log[index-rf.getFirstIndex()].Command
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -298,9 +347,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// append this command to its log and return
 	// the HBT timer will sync this log to other peers
 	DebugNewCommand(rf)
-	rf.log = append(rf.log, LogEntry{rf.currentTerm, command})
+	rf.log = append(rf.log, LogEntry{rf.currentTerm, rf.getLastIndex() + 1, command})
 	rf.persist()
-	return len(rf.log) - 1, rf.currentTerm, true
+	return rf.getLastIndex(), rf.currentTerm, true
 }
 
 //
@@ -361,7 +410,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = -1
 	rf.log = []LogEntry{}
 	// add dummy log
-	rf.log = append(rf.log, LogEntry{})
+	rf.log = append(rf.log, LogEntry{0, 0, nil})
 
 	rf.roler = FOLLOWER
 
@@ -373,11 +422,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.nextIndex = make([]int, num_servers)
 	rf.matchIndex = make([]int, num_servers)
+	rf.commitQueue = make([]ApplyMsg, 0)
 
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.commitIdx = rf.getFirstIndex()
 
 	// start ticker goroutine to start elections
 	go rf.election_ticker()

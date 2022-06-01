@@ -22,10 +22,20 @@ func (rf *Raft) heartbeat_ticker() {
 			if !time.Now().After(rf.AppendExpireTime[i]) {
 				continue
 			}
-			// send appendEntry to peers_i
-			logs := make([]LogEntry, len(rf.log)-rf.nextIndex[i])
-			copy(logs, rf.log[rf.nextIndex[i]:])
-			go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.log[rf.nextIndex[i]-1].Term, logs, rf.commitIdx)
+			// check whether to send snapshot or logs
+			if rf.nextIndex[i] <= rf.getFirstIndex() {
+				// TODO
+				// send snapshot!
+				go rf.CallInstallSnapshot(i, rf.currentTerm,
+					rf.me, rf.getFirstIndex(),
+					rf.getFirstTerm(), rf.persister.ReadSnapshot())
+			} else {
+				// send log!
+				// send appendEntry to peers_i
+				logs := make([]LogEntry, rf.getLastIndex()-rf.nextIndex[i]+1)
+				copy(logs, rf.log[rf.nextIndex[i]-rf.getFirstIndex():])
+				go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.getTermForIndex(rf.nextIndex[i]-1), logs, rf.commitIdx)
+			}
 			rf.ResetAppendTimer(i, false)
 		}
 		rf.mu.Unlock()
@@ -85,7 +95,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 
 			// check whether can update commitIndex
-			diff := make([]int, len(rf.log)+5)
+			diff := make([]int, rf.getLastIndex()+5)
 			for i := 0; i < len(rf.peers); i++ {
 				if i == rf.me {
 					continue
@@ -100,13 +110,20 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 					ok_idx = i
 				}
 			}
+			Debug(dLog, "S%d at T%d Receive Append Reply From S%d, origin CommitIndex: %d, OK_IDX:%d",
+				rf.me, rf.currentTerm, idx, rf.commitIdx, ok_idx)
 
-			if ok_idx > rf.commitIdx && rf.log[ok_idx].Term == rf.currentTerm {
-				// if there is new commit Log, notify the applier to send
+			if ok_idx > rf.commitIdx && rf.getTermForIndex(ok_idx) == rf.currentTerm {
+				// if there is new commit Log, add this to applyQueue
 				Debug(dLog, "S%d at T%d Reset it CI From %d to %d", rf.me, rf.currentTerm, rf.commitIdx, ok_idx)
+				for i := rf.commitIdx + 1; i <= ok_idx; i++ {
+					rf.commitQueue = append(rf.commitQueue, ApplyMsg{
+						CommandValid: true,
+						CommandIndex: i,
+						Command:      rf.getCommand(i),
+					})
+				}
 				rf.commitIdx = ok_idx
-			}
-			if rf.commitIdx > rf.lastApplied {
 				rf.cv.Broadcast()
 			}
 		} else {
@@ -136,7 +153,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		// whether suc of not, if the nextIndex[idx] is not the len(rf.log)
 		// means this follower log is not matched, seend appendEntry to this
 		// peer immediately
-		if rf.nextIndex[idx] != len(rf.log) {
+		if rf.nextIndex[idx] != rf.getLastIndex()+1 {
 			rf.ResetAppendTimer(idx, true)
 		}
 	}

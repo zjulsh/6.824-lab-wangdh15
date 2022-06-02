@@ -102,7 +102,7 @@ func DebugGetInfo(rf *Raft) {
 
 func DebugReceiveAppendEntries(rf *Raft, entry *AppendEntriesArgs) {
 	Debug(dLog, "S%d <- S%d at T%d PLI:%d PLT: %d LC:%d - %v", rf.me, entry.LeaderId, entry.Term, entry.PrevLogIndex, entry.PrevLogTerm, entry.LeaderCommit, entry.Entries)
-	Debug(dLog, "S%d at T%d Before Reply AppendEntries. CI:%d LA:%d log is - %v", rf.me, rf.currentTerm, rf.commitIdx, rf.lastApplied, rf.log)
+	Debug(dLog, "S%d at T%d Before Reply AppendEntries. CI:%d, log is - %v", rf.me, rf.currentTerm, rf.commitIdx, rf.log)
 }
 
 func DebugResetELT(rf *Raft) {
@@ -119,7 +119,7 @@ func DebugNewCommand(rf *Raft) {
 
 func DebugAfterReceiveAppendEntries(rf *Raft, args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	Debug(dLog, "S%d at T%d Reply AppendEntries From S%d at T%d With [OK: %v T:%v CFT: %d CFI: %d]", rf.me, rf.currentTerm, args.LeaderId, args.Term, reply.Success, reply.Term, reply.ConflictTerm, reply.ConflictIndex)
-	Debug(dLog, "S%d at T%d After Reply AppendEntries. CI:%d LA:%d log is - %v", rf.me, rf.currentTerm, rf.commitIdx, rf.lastApplied, rf.log)
+	Debug(dLog, "S%d at T%d After Reply AppendEntries. CI:%d, log is - %v", rf.me, rf.currentTerm, rf.commitIdx, rf.log)
 }
 
 //

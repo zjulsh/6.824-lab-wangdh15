@@ -2,7 +2,7 @@ package raft
 
 import "time"
 
-func (rf *Raft) heartbeat_ticker() {
+func (rf *Raft) append_ticker() {
 	for !rf.killed() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
@@ -24,14 +24,12 @@ func (rf *Raft) heartbeat_ticker() {
 			}
 			// check whether to send snapshot or logs
 			if rf.nextIndex[i] <= rf.getFirstIndex() {
-				// TODO
 				// send snapshot!
 				go rf.CallInstallSnapshot(i, rf.currentTerm,
 					rf.me, rf.getFirstIndex(),
 					rf.getFirstTerm(), rf.persister.ReadSnapshot())
 			} else {
 				// send log!
-				// send appendEntry to peers_i
 				logs := make([]LogEntry, rf.getLastIndex()-rf.nextIndex[i]+1)
 				copy(logs, rf.log[rf.nextIndex[i]-rf.getFirstIndex():])
 				go rf.CallAppendEntries(i, rf.currentTerm, rf.me, rf.nextIndex[i]-1, rf.getTermForIndex(rf.nextIndex[i]-1), logs, rf.commitIdx)
@@ -59,19 +57,21 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		// check roler
-		if rf.roler != LEADER {
-			return
-		}
+
 		// check term replyTerm and curTerm
 		if reply.Term < rf.currentTerm {
 			return
 		}
 		if reply.Term > rf.currentTerm {
-			rf.changeToFollower(reply.Term)
+			rf.changeToFollower(reply.Term, -1)
 			rf.ResetElectionTimer()
 			return
 		}
+		// check roler
+		if rf.roler != LEADER {
+			return
+		}
+
 		// check argsTerm and curTerm
 		// something will happen. when this leader sent x in term i
 		// then this leader become leader of term i + 2
@@ -91,6 +91,7 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 		// means this is not a out of date reply
 		if reply.Success {
 			// update the nextIndex and matchIndex
+			Debug(dTrace, "S%d Change the MIX and NIX of S%d, MID: %d->%d, NIX: %d->%d", rf.me, idx, rf.matchIndex[idx], rf.nextIndex[idx]+len(logs)-1, rf.nextIndex[idx], rf.nextIndex[idx]+len(logs))
 			rf.nextIndex[idx] = rf.nextIndex[idx] + len(logs)
 			rf.matchIndex[idx] = rf.nextIndex[idx] - 1
 
@@ -133,8 +134,8 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 				rf.nextIndex[idx] = reply.ConflictIndex
 			} else {
 				findIdx := -1
-				for i := len(rf.log); i > 0; i-- {
-					if rf.log[i-1].Term == reply.ConflictTerm {
+				for i := rf.getLastIndex() + 1; i > rf.getFirstIndex(); i-- {
+					if rf.getTermForIndex(i-1) == reply.ConflictTerm {
 						findIdx = i
 						break
 					}
@@ -157,4 +158,14 @@ func (rf *Raft) CallAppendEntries(idx int, term int, me int, prevLogIndex int, p
 			rf.ResetAppendTimer(idx, true)
 		}
 	}
+}
+
+// reset heartBeat, imme mean whether send immediately
+func (rf *Raft) ResetAppendTimer(idx int, imme bool) {
+	t := time.Now()
+	if !imme {
+		t = t.Add(APPEND_EXPIRE_TIME * time.Millisecond)
+	}
+	rf.AppendExpireTime[idx] = t
+	DebugResetHBT(rf, idx)
 }

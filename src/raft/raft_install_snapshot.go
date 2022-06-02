@@ -12,6 +12,36 @@ type InstallSnapshotReply struct {
 	Term int
 }
 
+// the service says it has created a snapshot that has
+// all info up to and including index. this means the
+// service no longer needs the log through (and including)
+// that index. Raft should now trim its log as much as possible.
+func (rf *Raft) Snapshot(index int, snapshot []byte) {
+	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	Debug(dSnap, "S%d at T%d GetAPP IDX:%d, SnapShot: %v", rf.me, rf.currentTerm, index, snapshot)
+	// check the parameters
+	if index <= rf.getFirstIndex() {
+		Debug(dError, "S%d Application Set out of date snapshot!, Index: %d, FirstIndex: %d", rf.me, index, rf.getFirstIndex())
+		return
+	}
+
+	firstLogIndex := rf.getFirstIndex()
+	lastLogIndex := rf.getLastIndex()
+	old_log := rf.log
+	rf.log = make([]LogEntry, lastLogIndex-index+1)
+	copy(rf.log, old_log[index-firstLogIndex:])
+	rf.log[0].Command = nil // delete the first dummy command
+
+	state_serilize_result := SerilizeState(rf)
+
+	rf.persister.SaveStateAndSnapshot(state_serilize_result, snapshot)
+	Debug(dPersist, "S%d Persiste Snapshot Before Index: %d", rf.me, index)
+	Debug(dSnap, "S%d at T%d After GetAPP, log is %v", rf.me, rf.currentTerm, rf.log)
+}
+
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -35,6 +65,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		// peer's log contain more logs, ignore this rpc
 		reply.Term = args.Term
 	} else {
+		reply.Term = args.Term
 		rf.commitQueue = append(rf.commitQueue, ApplyMsg{
 			CommandValid:  false,
 			SnapshotValid: true,
@@ -76,7 +107,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.cv.Broadcast()
 	}
 	if args.Term > rf.currentTerm || rf.roler != FOLLOWER {
-		rf.changeToFollower(args.Term)
+		rf.changeToFollower(args.Term, -1)
 	}
 	rf.ResetElectionTimer()
 
@@ -97,16 +128,30 @@ func (rf *Raft) CallInstallSnapshot(idx, term, me, lastIncludedIndex, lastInclud
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
+		// check term
+		if reply.Term < rf.currentTerm {
+			return
+		}
 		if reply.Term > rf.currentTerm {
 			// get bigger term
-			rf.changeToFollower(reply.Term)
+			rf.changeToFollower(reply.Term, -1)
 			rf.ResetElectionTimer()
-		} else {
-			Debug(dSnap, "S%d Receive Snap Reply from S%d", rf.me, idx)
-			if lastIncludedIndex > rf.matchIndex[idx] {
-				rf.matchIndex[idx] = lastIncludedIndex
-				rf.nextIndex[idx] = lastIncludedIndex + 1
-			}
+			return
+		}
+
+		// check args.Term and curTerm
+		if args.Term != rf.currentTerm {
+			// outofdate reply!
+			return
+		}
+
+		// when reach hear
+		// args.Term == rf.currentTerm == reply.Term
+		Debug(dSnap, "S%d Receive Snap Reply from S%d", rf.me, idx)
+		if lastIncludedIndex > rf.matchIndex[idx] {
+			Debug(dTrace, "S%d Change the MIX and NIX of S%d, MID: %d->%d, NIX: %d->%d", rf.me, idx, rf.matchIndex[idx], lastIncludedIndex, rf.nextIndex[idx], lastIncludedIndex+1)
+			rf.matchIndex[idx] = lastIncludedIndex
+			rf.nextIndex[idx] = lastIncludedIndex + 1
 		}
 	}
 }
@@ -114,4 +159,12 @@ func (rf *Raft) CallInstallSnapshot(idx, term, me, lastIncludedIndex, lastInclud
 func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
 	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	return ok
+}
+
+//
+// A service wants to switch to snapshot.  Only do so if Raft hasn't
+// have more recent info since it communicate the snapshot on applyCh.
+//
+func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
+	return true
 }

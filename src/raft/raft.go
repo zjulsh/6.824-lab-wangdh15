@@ -20,12 +20,10 @@ package raft
 import (
 	//	"bytes"
 
-	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -59,18 +57,6 @@ const (
 	APPEND_TIMER_RESOLUTION = 2
 )
 
-type ApplyMsg struct {
-	CommandValid bool
-	Command      interface{}
-	CommandIndex int
-
-	// For 2D:
-	SnapshotValid bool
-	Snapshot      []byte
-	SnapshotTerm  int
-	SnapshotIndex int
-}
-
 type LogEntry struct {
 	Term    int
 	Index   int
@@ -99,17 +85,9 @@ type Raft struct {
 	ElectionExpireTime time.Time   // election expire time
 	AppendExpireTime   []time.Time // next send append time
 
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
-
 	// index of highest log entry known to be commited
 	// (initialized to 0, increase monotonically)
 	commitIdx int
-
-	// index of highest log entry applied to state machine
-	// (initialized to 0, increase monotonically)
-	lastApplied int
 
 	// AppendEntries RPC should send peer_i the nextIndex[peer_i] log
 	// to peer_i
@@ -134,156 +112,6 @@ func (rf *Raft) GetState() (int, bool) {
 	isleader := rf.roler == LEADER
 	DebugGetInfo(rf)
 	return term, isleader
-}
-
-//
-// save Raft's persistent state to stable storage,
-// where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
-//
-func (rf *Raft) persist() {
-	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
-	data := SerilizeState(rf)
-	rf.persister.SaveRaftState(data)
-	Debug(dPersist, "S%d Persist States. T%d, votedFor:%d, log: %v", rf.me,
-		rf.currentTerm, rf.votedFor, rf.log)
-}
-
-//
-// restore previously persisted state.
-//
-func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-	r := bytes.NewBuffer(data)
-	d := labgob.NewDecoder(r)
-	var currentTerm int
-	var votedFor int
-	var log []LogEntry
-	if d.Decode(&currentTerm) != nil ||
-		d.Decode(&votedFor) != nil ||
-		d.Decode(&log) != nil {
-		Debug(dError, "S%d Read Persist Error!", rf.me)
-	} else {
-		rf.currentTerm = currentTerm
-		rf.votedFor = votedFor
-		rf.log = log
-		Debug(dPersist, "S%d ReadPersist. State: T%d, votedFor%d, log: %v", rf.me,
-			rf.currentTerm, rf.votedFor, rf.log)
-	}
-}
-
-// reset Election
-func (rf *Raft) ResetElectionTimer() {
-	rf.ElectionExpireTime = GetRandomExpireTime(ELECTION_EXPIRE_LEFT, ELECTION_EXPIRE_RIGHT)
-	DebugResetELT(rf)
-}
-
-// reset heartBeat, imme mean whether send immediately
-func (rf *Raft) ResetAppendTimer(idx int, imme bool) {
-	t := time.Now()
-	if !imme {
-		t = t.Add(APPEND_EXPIRE_TIME * time.Millisecond)
-	}
-	rf.AppendExpireTime[idx] = t
-	DebugResetHBT(rf, idx)
-}
-
-//
-// A service wants to switch to snapshot.  Only do so if Raft hasn't
-// have more recent info since it communicate the snapshot on applyCh.
-//
-func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-	return true
-}
-
-// the service says it has created a snapshot that has
-// all info up to and including index. this means the
-// service no longer needs the log through (and including)
-// that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	Debug(dSnap, "S%d at T%d GetAPP IDX:%d, SnapShot: %v", rf.me, rf.currentTerm, index, snapshot)
-	// check the parameters
-	if index <= rf.getFirstIndex() {
-		Debug(dError, "S%d Application Set out of date snapshot!, Index: %d, FirstIndex: %d", rf.me, index, rf.getFirstIndex())
-		return
-	}
-
-	firstLogIndex := rf.getFirstIndex()
-	lastLogIndex := rf.getLastIndex()
-	old_log := rf.log
-	rf.log = make([]LogEntry, lastLogIndex-index+1)
-	copy(rf.log, old_log[index-firstLogIndex:])
-	rf.log[0].Command = nil // delete the first dummy command
-
-	state_serilize_result := SerilizeState(rf)
-
-	rf.persister.SaveStateAndSnapshot(state_serilize_result, snapshot)
-	Debug(dPersist, "S%d Persiste Snapshot Before Index: %d", rf.me, index)
-	Debug(dSnap, "S%d at T%d After GetAPP, log is %v", rf.me, rf.currentTerm, rf.log)
-}
-
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
-	// Your data here (2A, 2B).
-}
-
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	Term        int
-	VoteGranted bool
-	// Your data here (2A).
-}
-
-type AppendEntriesArgs struct {
-	Term         int
-	LeaderId     int
-	PrevLogIndex int
-	PrevLogTerm  int
-	Entries      []LogEntry
-	LeaderCommit int
-}
-
-type AppendEntriesReply struct {
-	Term          int
-	Success       bool
-	ConflictTerm  int
-	ConflictIndex int
 }
 
 // get the first dummy log index
@@ -393,46 +221,40 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		FOLLOWER:  "F",
 	}
 
-	// set rand seed, copy code from
-	// https: //pkg.go.dev/math/rand
-	// rand.Seed(time.Now().UnixNano())
-
 	num_servers := len(peers)
 
-	rf := &Raft{}
+	rf := &Raft{
+		peers:            peers,
+		persister:        persister,
+		me:               me,
+		currentTerm:      0,
+		votedFor:         -1,
+		log:              make([]LogEntry, 0),
+		roler:            FOLLOWER,
+		AppendExpireTime: make([]time.Time, num_servers),
+		nextIndex:        make([]int, num_servers),
+		matchIndex:       make([]int, num_servers),
+		commitQueue:      make([]ApplyMsg, 0),
+	}
 	rf.cv = sync.NewCond(&rf.mu)
-
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
-
-	rf.currentTerm = 0
-	rf.votedFor = -1
-	rf.log = []LogEntry{}
-	// add dummy log
-	rf.log = append(rf.log, LogEntry{0, 0, nil})
-
-	rf.roler = FOLLOWER
-
+	// add a dummy log
+	rf.log = append(rf.log, LogEntry{
+		Index:   0,
+		Term:    0,
+		Command: nil,
+	})
 	rf.ResetElectionTimer()
-	rf.AppendExpireTime = make([]time.Time, num_servers)
 	for i := 0; i < num_servers; i++ {
 		rf.ResetAppendTimer(i, false)
 	}
-
-	rf.nextIndex = make([]int, num_servers)
-	rf.matchIndex = make([]int, num_servers)
-	rf.commitQueue = make([]ApplyMsg, 0)
-
-	// Your initialization code here (2A, 2B, 2C).
-
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	// initialize commitIndex after recover
 	rf.commitIdx = rf.getFirstIndex()
 
-	// start ticker goroutine to start elections
+	// start ticker goroutine to check Election and appendEntry
 	go rf.election_ticker()
-	go rf.heartbeat_ticker()
+	go rf.append_ticker()
 
 	// start async apply goroutine
 	go rf.Applier(applyCh)

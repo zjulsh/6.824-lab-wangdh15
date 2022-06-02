@@ -1,5 +1,21 @@
 package raft
 
+type AppendEntriesArgs struct {
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
+	LeaderCommit int
+}
+
+type AppendEntriesReply struct {
+	Term          int
+	Success       bool
+	ConflictTerm  int
+	ConflictIndex int
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -89,7 +105,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// change self to follower
 	if args.Term > rf.currentTerm || rf.roler != FOLLOWER {
 		// change self to follower
-		rf.changeToFollower(args.Term)
+		rf.changeToFollower(args.Term, -1)
 	}
 	// reset vote expire time
 	rf.ResetElectionTimer()

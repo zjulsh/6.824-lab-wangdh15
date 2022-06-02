@@ -1,5 +1,17 @@
 package raft
 
+type ApplyMsg struct {
+	CommandValid bool
+	Command      interface{}
+	CommandIndex int
+
+	// For 2D:
+	SnapshotValid bool
+	Snapshot      []byte
+	SnapshotTerm  int
+	SnapshotIndex int
+}
+
 // async send commit to ApplyCh
 // this is a producer and consumer model
 // the return result of AppendEntries modify the commitIdx, means push element to queue
@@ -13,12 +25,11 @@ func (rf *Raft) Applier(applyCh chan ApplyMsg) {
 		msgs := rf.commitQueue
 		rf.commitQueue = make([]ApplyMsg, 0)
 		rf.mu.Unlock()
-		// get all logs and send to allyCh
 		for _, msg := range msgs {
 			if msg.CommandValid {
-				Debug(dLog2, "S%d Apply Commnd T%d IDX%d CMD: %v", rf.me, rf.log[rf.lastApplied+1].Term, msg.CommandIndex, msg.CommandIndex)
+				Debug(dLog2, "S%d Apply Commnd IDX%d CMD: %v", rf.me, msg.CommandIndex, msg.Command)
 			} else if msg.SnapshotValid {
-				Debug(dLog2, "S%d Apply Snapshot. LastIndex: %d, snapShot: %v", rf.me, msg.SnapshotIndex, msg.Snapshot)
+				Debug(dLog2, "S%d Apply Snapshot. LII: %d, %d LIT: %d, snapShot: %v", rf.me, msg.SnapshotIndex, msg.SnapshotTerm, msg.Snapshot)
 			} else {
 				Debug(dError, "S%d, Apply unknown Command!", rf.me)
 			}

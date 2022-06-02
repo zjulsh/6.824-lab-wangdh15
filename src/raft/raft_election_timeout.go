@@ -42,12 +42,7 @@ func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 	if ok {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		// check current roler
-		if rf.roler != CANDIDATE {
-			// have change to leader or follower,
-			// then the requestVote reply is ignored
-			return
-		}
+
 		// check relyTerm and curTem
 		if reply.Term < rf.currentTerm {
 			return
@@ -56,8 +51,14 @@ func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 		if reply.Term > rf.currentTerm {
 			// receive bigger term,
 			// change self to follower
-			rf.changeToFollower(reply.Term)
+			rf.changeToFollower(reply.Term, -1)
 			rf.ResetElectionTimer()
+			return
+		}
+		// check current roler
+		if rf.roler != CANDIDATE {
+			// have change to leader or follower,
+			// then the requestVote reply is ignored
 			return
 		}
 
@@ -80,10 +81,17 @@ func (rf *Raft) CallForVote(idx, term, lastLogIndex, lastLogTerm int) {
 					if i == rf.me {
 						continue
 					}
-					// send appendEntry immediately
+					// Reset the Append timer
+					// to send appendEntry immediately
 					rf.ResetAppendTimer(i, true)
 				}
 			}
 		}
 	}
+}
+
+// reset Election
+func (rf *Raft) ResetElectionTimer() {
+	rf.ElectionExpireTime = GetRandomExpireTime(ELECTION_EXPIRE_LEFT, ELECTION_EXPIRE_RIGHT)
+	DebugResetELT(rf)
 }

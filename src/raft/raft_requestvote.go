@@ -1,6 +1,26 @@
 package raft
 
 //
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
+type RequestVoteArgs struct {
+	Term         int
+	CandidateId  int
+	LastLogIndex int
+	LastLogTerm  int
+}
+
+//
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
+type RequestVoteReply struct {
+	Term        int
+	VoteGranted bool
+}
+
+//
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
@@ -22,13 +42,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// Term equal, check votedFor and log
 		if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && (args.LastLogTerm > curLastLogTerm || args.LastLogTerm == curLastLogTerm && args.LastLogIndex >= curLastLogIndex) {
 			reply.VoteGranted = true
-			rf.votedFor = args.CandidateId
-			if rf.roler != FOLLOWER {
-				rf.changeToFollower(args.Term)
-			} else {
-				rf.ResetElectionTimer()
-				rf.persist()
-			}
+			rf.changeToFollower(args.Term, args.CandidateId)
+			rf.ResetElectionTimer()
 		} else {
 			reply.VoteGranted = false
 		}
@@ -38,12 +53,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = args.Term
 		if args.LastLogTerm > curLastLogTerm || args.LastLogTerm == curLastLogTerm && args.LastLogIndex >= curLastLogIndex {
 			reply.VoteGranted = true
-			rf.votedFor = args.CandidateId
+			rf.changeToFollower(args.Term, args.CandidateId)
 		} else {
 			reply.VoteGranted = false
-			rf.votedFor = -1
+			rf.changeToFollower(args.Term, -1)
 		}
-		rf.changeToFollower(args.Term)
+		rf.ResetElectionTimer()
 	}
 
 	Debug(dVote, "S%d T%d Reply RequestVote From [S%d:T%d] With [OK %v: T %d]", rf.me, rf.currentTerm, args.CandidateId, args.Term, reply.VoteGranted, reply.Term)

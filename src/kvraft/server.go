@@ -1,28 +1,37 @@
 package kvraft
 
 import (
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
-	"log"
-	"sync"
-	"sync/atomic"
 )
 
-const Debug = false
+const (
+	GET    = "Get"
+	PUT    = "Put"
+	APPEND = "Append"
+)
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
-		log.Printf(format, a...)
-	}
-	return
-}
-
+const (
+	TIMEOUT = 1000 // if the raft donot response the request in 1000 ms, we think it is
+)
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Type  string
+	Key   string
+	Value string
+}
+
+type OpResult struct {
+	err   Err
+	value string
 }
 
 type KVServer struct {
@@ -35,15 +44,72 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-}
+	data map[string]string
 
+	chans map[int]chan OpResult
+}
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	DebugReceiveGet(kv, args)
+	defer DebugReplyGet(kv, args, reply)
+	op := Op{
+		Type: GET,
+		Key:  args.Key,
+	}
+	index, _, ok := kv.rf.Start(op)
+	if ok {
+		rec_chan := make(chan OpResult, 1)
+		kv.mu.Lock()
+		kv.chans[index] = rec_chan
+		kv.mu.Unlock()
+		timer := time.After(TIMEOUT * time.Millisecond)
+		select {
+		case <-timer:
+			// timeout!
+			reply.Err = "TIMEOUT"
+		case res := <-rec_chan:
+			// this op has be processed!
+			reply.Err = res.err
+			reply.Value = res.value
+		}
+		kv.mu.Lock()
+		delete(kv.chans, index)
+		kv.mu.Unlock()
+	} else {
+		reply.Err = ErrWrongLeader
+	}
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	DebugReceivePutAppend(kv, args)
+	defer DebugReplyPutAppend(kv, args, reply)
+	op := Op{
+		Type:  args.Op,
+		Key:   args.Key,
+		Value: args.Value,
+	}
+	index, _, ok := kv.rf.Start(op)
+
+	if ok {
+		rec_chan := make(chan OpResult, 1)
+		kv.mu.Lock()
+		kv.chans[index] = rec_chan
+		kv.mu.Unlock()
+		timer := time.After(TIMEOUT * time.Millisecond)
+		select {
+		case <-timer:
+			reply.Err = "TIMEOUT"
+		case res := <-rec_chan:
+			reply.Err = res.err
+		}
+		kv.mu.Lock()
+		delete(kv.chans, index)
+		kv.mu.Unlock()
+	} else {
+		reply.Err = ErrWrongLeader
+	}
 }
 
 //
@@ -65,6 +131,57 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) replyChan(idx int, res OpResult) {
+	kv.mu.Lock()
+	send_chan, ok := kv.chans[idx]
+	kv.mu.Unlock()
+	if ok {
+		send_chan <- res
+	}
+}
+
+func (kv *KVServer) process() {
+	for command := range kv.applyCh {
+		if command.CommandValid {
+			op := command.Command.(Op)
+			switch op.Type {
+			case GET:
+				val, ok := kv.data[op.Key]
+				res := OpResult{}
+				if ok {
+					res.value = val
+					res.err = OK
+				} else {
+					res.err = ErrNoKey
+				}
+				kv.replyChan(command.CommandIndex, res)
+			case PUT:
+				kv.data[op.Key] = op.Value
+				res := OpResult{
+					err: OK,
+				}
+				kv.replyChan(command.CommandIndex, res)
+			case APPEND:
+				origin_val, ok := kv.data[op.Key]
+				if ok {
+					kv.data[op.Key] = origin_val + op.Value
+				} else {
+					kv.data[op.Key] = op.Value
+				}
+				res := OpResult{
+					err: OK,
+				}
+				kv.replyChan(command.CommandIndex, res)
+			default:
+			}
+		} else if command.SnapshotValid {
+
+		} else {
+
+		}
+	}
 }
 
 //
@@ -94,8 +211,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.data = make(map[string]string)
+	kv.chans = make(map[int]chan OpResult)
 
 	// You may need initialization code here.
+
+	go kv.process()
 
 	return kv
 }

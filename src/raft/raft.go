@@ -177,6 +177,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	DebugNewCommand(rf)
 	rf.log = append(rf.log, LogEntry{rf.currentTerm, rf.getLastIndex() + 1, command})
 	rf.persist()
+	// send appendEntry immediately
+	for i := 0; i < len(rf.peers); i++ {
+		rf.ResetAppendTimer(i, true)
+	}
 	return rf.getLastIndex(), rf.currentTerm, true
 }
 

@@ -3,7 +3,6 @@ package kvraft
 import (
 	"crypto/rand"
 	"math/big"
-	"time"
 
 	"6.824/labrpc"
 )
@@ -49,8 +48,7 @@ func (ck *Clerk) Get(key string) string {
 	}
 	cur_try_server := ck.last_leader
 	for {
-		time.Sleep(100 * time.Millisecond)
-		cur_try_server = (cur_try_server + 1) % len(ck.servers)
+		// time.Sleep(100 * time.Millisecond)
 		reply := GetReply{}
 		ck.servers[cur_try_server].Call("KVServer.Get", &args, &reply)
 		if reply.Err == OK {
@@ -60,6 +58,7 @@ func (ck *Clerk) Get(key string) string {
 			ck.last_leader = cur_try_server
 			return ""
 		}
+		cur_try_server = (cur_try_server + 1) % len(ck.servers)
 	}
 }
 
@@ -82,14 +81,14 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	}
 	cur_try_server := ck.last_leader
 	for {
-		time.Sleep(100 * time.Millisecond)
 		reply := PutAppendReply{}
-		cur_try_server = (cur_try_server + 1) % len(ck.servers)
 		ck.servers[cur_try_server].Call("KVServer.PutAppend", &args, &reply)
 		if reply.Err == OK {
 			ck.last_leader = cur_try_server
 			return
 		}
+		cur_try_server = (cur_try_server + 1) % len(ck.servers)
+		// time.Sleep(100 * time.Millisecond)
 	}
 }
 

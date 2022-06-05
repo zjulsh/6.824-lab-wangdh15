@@ -17,16 +17,20 @@ const (
 )
 
 const (
-	TIMEOUT = 1000 // if the raft donot response the request in 1000 ms, we think it is
+	TIMEOUT = 100 // if the raft donot response the request in 1000 ms, we think it is
 )
 
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Type  string
-	Key   string
-	Value string
+	Type      string
+	Key       string
+	Value     string
+	ClientId  int64
+	ClientSeq uint64
+	ServerId  int
+	ServerSeq int64
 }
 
 type OpResult struct {
@@ -35,34 +39,57 @@ type OpResult struct {
 }
 
 type KVServer struct {
-	mu      sync.Mutex
-	me      int
-	rf      *raft.Raft
-	applyCh chan raft.ApplyMsg
-	dead    int32 // set by Kill()
+	mu        sync.Mutex
+	me        int
+	rf        *raft.Raft
+	applyCh   chan raft.ApplyMsg
+	dead      int32 // set by Kill()
+	persister *raft.Persister
 
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
 	data map[string]string
 
-	chans map[int]chan OpResult
+	chans map[int64]chan OpResult
+	// 这两个数据在重启之后Reply会被重建，所以不需要持久化存储
+	client_to_last_process_seq    map[int64]uint64
+	client_to_last_process_result map[int64]OpResult
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	DebugReceiveGet(kv, args)
 	defer DebugReplyGet(kv, args, reply)
-	op := Op{
-		Type: GET,
-		Key:  args.Key,
-	}
-	index, _, ok := kv.rf.Start(op)
+	kv.mu.Lock()
+	last_process_seq, ok := kv.client_to_last_process_seq[args.ClientId]
 	if ok {
-		rec_chan := make(chan OpResult, 1)
-		kv.mu.Lock()
-		kv.chans[index] = rec_chan
-		kv.mu.Unlock()
+		if last_process_seq == args.ClientSeq {
+			reply.Err = kv.client_to_last_process_result[args.ClientId].err
+			reply.Value = kv.client_to_last_process_result[args.ClientId].value
+			kv.mu.Unlock()
+			return
+		} else if last_process_seq > args.ClientSeq {
+			// this is a out of date request, return immediately
+			kv.mu.Unlock()
+			return
+		}
+	}
+	kv.mu.Unlock()
+
+	op := Op{
+		Type:      GET,
+		Key:       args.Key,
+		ClientId:  args.ClientId,
+		ClientSeq: args.ClientSeq,
+		ServerId:  kv.me,
+		ServerSeq: nrand(),
+	}
+	rec_chan := make(chan OpResult, 1)
+	kv.mu.Lock()
+	kv.chans[op.ServerSeq] = rec_chan
+	kv.mu.Unlock()
+	if _, _, ok1 := kv.rf.Start(op); ok1 {
 		timer := time.After(TIMEOUT * time.Millisecond)
 		select {
 		case <-timer:
@@ -73,39 +100,58 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			reply.Err = res.err
 			reply.Value = res.value
 		}
-		kv.mu.Lock()
-		delete(kv.chans, index)
-		kv.mu.Unlock()
 	} else {
 		reply.Err = ErrWrongLeader
 	}
+	kv.mu.Lock()
+	delete(kv.chans, op.ServerSeq)
+	kv.mu.Unlock()
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	DebugReceivePutAppend(kv, args)
 	defer DebugReplyPutAppend(kv, args, reply)
-	op := Op{
-		Type:  args.Op,
-		Key:   args.Key,
-		Value: args.Value,
-	}
-	index, _, ok := kv.rf.Start(op)
-
+	kv.mu.Lock()
+	last_process_seq, ok := kv.client_to_last_process_seq[args.ClientId]
 	if ok {
+		if last_process_seq == args.ClientSeq {
+			reply.Err = kv.client_to_last_process_result[args.ClientId].err
+			kv.mu.Unlock()
+			return
+		} else if last_process_seq > args.ClientSeq {
+			// this is a out of date request, return immediately
+			kv.mu.Unlock()
+			return
+		}
+	}
+	kv.mu.Unlock()
+
+	op := Op{
+		Type:      args.Op,
+		Key:       args.Key,
+		Value:     args.Value,
+		ClientId:  args.ClientId,
+		ClientSeq: args.ClientSeq,
+		ServerId:  kv.me,
+		ServerSeq: nrand(),
+	}
+	if _, _, ok1 := kv.rf.Start(op); ok1 {
 		rec_chan := make(chan OpResult, 1)
 		kv.mu.Lock()
-		kv.chans[index] = rec_chan
+		kv.chans[op.ServerSeq] = rec_chan
 		kv.mu.Unlock()
 		timer := time.After(TIMEOUT * time.Millisecond)
 		select {
 		case <-timer:
+			// timeout!
 			reply.Err = "TIMEOUT"
 		case res := <-rec_chan:
+			// this op has be processed!
 			reply.Err = res.err
 		}
 		kv.mu.Lock()
-		delete(kv.chans, index)
+		delete(kv.chans, op.ServerSeq)
 		kv.mu.Unlock()
 	} else {
 		reply.Err = ErrWrongLeader
@@ -133,19 +179,46 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
-func (kv *KVServer) replyChan(idx int, res OpResult) {
+func (kv *KVServer) replyChan(server_seq int64, res OpResult) {
 	kv.mu.Lock()
-	send_chan, ok := kv.chans[idx]
+	send_chan, ok := kv.chans[server_seq]
 	kv.mu.Unlock()
 	if ok {
 		send_chan <- res
 	}
 }
 
+// check whether need to process
+func (kv *KVServer) check_dup(op Op) (bool, OpResult) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	client_last_process_seq, ok := kv.client_to_last_process_seq[op.ClientId]
+	if ok {
+		if op.ClientSeq <= client_last_process_seq {
+			// need not to process
+			return false, kv.client_to_last_process_result[op.ClientId]
+		}
+	}
+	// need to process
+	return true, OpResult{}
+}
+
+func (kv *KVServer) update(op Op, res OpResult) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	kv.client_to_last_process_seq[op.ClientId] = op.ClientSeq
+	kv.client_to_last_process_result[op.ClientId] = res
+}
+
 func (kv *KVServer) process() {
 	for command := range kv.applyCh {
 		if command.CommandValid {
 			op := command.Command.(Op)
+			need_process, res := kv.check_dup(op)
+			if !need_process {
+				kv.replyChan(op.ServerSeq, res)
+				continue
+			}
 			switch op.Type {
 			case GET:
 				val, ok := kv.data[op.Key]
@@ -156,13 +229,15 @@ func (kv *KVServer) process() {
 				} else {
 					res.err = ErrNoKey
 				}
-				kv.replyChan(command.CommandIndex, res)
+				kv.update(op, res)
+				kv.replyChan(op.ServerSeq, res)
 			case PUT:
 				kv.data[op.Key] = op.Value
 				res := OpResult{
 					err: OK,
 				}
-				kv.replyChan(command.CommandIndex, res)
+				kv.update(op, res)
+				kv.replyChan(op.ServerSeq, res)
 			case APPEND:
 				origin_val, ok := kv.data[op.Key]
 				if ok {
@@ -173,7 +248,8 @@ func (kv *KVServer) process() {
 				res := OpResult{
 					err: OK,
 				}
-				kv.replyChan(command.CommandIndex, res)
+				kv.update(op, res)
+				kv.replyChan(op.ServerSeq, res)
 			default:
 			}
 		} else if command.SnapshotValid {
@@ -212,7 +288,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.data = make(map[string]string)
-	kv.chans = make(map[int]chan OpResult)
+	kv.chans = make(map[int64]chan OpResult)
+	kv.client_to_last_process_seq = make(map[int64]uint64)
+	kv.client_to_last_process_result = make(map[int64]OpResult)
+	kv.persister = persister
 
 	// You may need initialization code here.
 

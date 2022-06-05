@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,8 +35,8 @@ type Op struct {
 }
 
 type OpResult struct {
-	err   Err
-	value string
+	Error Err
+	Value string
 }
 
 type KVServer struct {
@@ -53,8 +54,44 @@ type KVServer struct {
 
 	chans map[int64]chan OpResult
 	// 这两个数据在重启之后Reply会被重建，所以不需要持久化存储
+	// 但是如果加入了快照，则这两个需要被持久化
 	client_to_last_process_seq    map[int64]uint64
 	client_to_last_process_result map[int64]OpResult
+}
+
+func (kv *KVServer) serilizeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.data)
+	kv.mu.Lock()
+	e.Encode(kv.client_to_last_process_seq)
+	e.Encode(kv.client_to_last_process_result)
+	kv.mu.Unlock()
+	return w.Bytes()
+}
+
+func (kv *KVServer) DeSerilizeState(snapshot []byte) {
+	if len(snapshot) == 0 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var data map[string]string
+	var client_to_last_process_seq map[int64]uint64
+	var client_to_last_process_result map[int64]OpResult
+	if d.Decode(&data) != nil ||
+		d.Decode(&client_to_last_process_seq) != nil ||
+		d.Decode(&client_to_last_process_result) != nil {
+		Debug(dError, "S%d KVServer Read Persist Error!", kv.me)
+	} else {
+		kv.data = data
+		kv.mu.Lock()
+		kv.client_to_last_process_seq = client_to_last_process_seq
+		kv.client_to_last_process_result = client_to_last_process_result
+		kv.mu.Unlock()
+		Debug(dPersist, "S%d KVServer ReadPersist. Data: %v, Seq: %v, Res: %v", kv.me,
+			kv.data, kv.client_to_last_process_seq, kv.client_to_last_process_result)
+	}
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -65,8 +102,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	last_process_seq, ok := kv.client_to_last_process_seq[args.ClientId]
 	if ok {
 		if last_process_seq == args.ClientSeq {
-			reply.Err = kv.client_to_last_process_result[args.ClientId].err
-			reply.Value = kv.client_to_last_process_result[args.ClientId].value
+			reply.Err = kv.client_to_last_process_result[args.ClientId].Error
+			reply.Value = kv.client_to_last_process_result[args.ClientId].Value
 			kv.mu.Unlock()
 			return
 		} else if last_process_seq > args.ClientSeq {
@@ -97,8 +134,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			reply.Err = "TIMEOUT"
 		case res := <-rec_chan:
 			// this op has be processed!
-			reply.Err = res.err
-			reply.Value = res.value
+			reply.Err = res.Error
+			reply.Value = res.Value
 		}
 	} else {
 		reply.Err = ErrWrongLeader
@@ -116,7 +153,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	last_process_seq, ok := kv.client_to_last_process_seq[args.ClientId]
 	if ok {
 		if last_process_seq == args.ClientSeq {
-			reply.Err = kv.client_to_last_process_result[args.ClientId].err
+			reply.Err = kv.client_to_last_process_result[args.ClientId].Error
 			kv.mu.Unlock()
 			return
 		} else if last_process_seq > args.ClientSeq {
@@ -148,7 +185,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			reply.Err = "TIMEOUT"
 		case res := <-rec_chan:
 			// this op has be processed!
-			reply.Err = res.err
+			reply.Err = res.Error
 		}
 		kv.mu.Lock()
 		delete(kv.chans, op.ServerSeq)
@@ -224,17 +261,17 @@ func (kv *KVServer) process() {
 				val, ok := kv.data[op.Key]
 				res := OpResult{}
 				if ok {
-					res.value = val
-					res.err = OK
+					res.Value = val
+					res.Error = OK
 				} else {
-					res.err = ErrNoKey
+					res.Error = ErrNoKey
 				}
 				kv.update(op, res)
 				kv.replyChan(op.ServerSeq, res)
 			case PUT:
 				kv.data[op.Key] = op.Value
 				res := OpResult{
-					err: OK,
+					Error: OK,
 				}
 				kv.update(op, res)
 				kv.replyChan(op.ServerSeq, res)
@@ -246,16 +283,24 @@ func (kv *KVServer) process() {
 					kv.data[op.Key] = op.Value
 				}
 				res := OpResult{
-					err: OK,
+					Error: OK,
 				}
 				kv.update(op, res)
 				kv.replyChan(op.ServerSeq, res)
 			default:
+				Debug(dError, "S%d KVServer Process Unknown OP: %v", kv.me, op)
+			}
+			// check whether need to snapshot
+			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() >= 8*kv.maxraftstate {
+				snapshot := kv.serilizeState()
+				go kv.rf.Snapshot(command.CommandIndex, snapshot)
+				Debug(dSnap, "S%d KVServer Create Snapshot! IDX:%d, Snapshot:%v", kv.me, command.CommandIndex, snapshot)
 			}
 		} else if command.SnapshotValid {
-
+			// update self state
+			kv.DeSerilizeState(command.Snapshot)
 		} else {
-
+			Debug(dError, "S%d KVServer Process Unknown Command: %v", kv.me, command)
 		}
 	}
 }
@@ -291,6 +336,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.chans = make(map[int64]chan OpResult)
 	kv.client_to_last_process_seq = make(map[int64]uint64)
 	kv.client_to_last_process_result = make(map[int64]OpResult)
+	snapshot := persister.ReadSnapshot()
+	kv.DeSerilizeState(snapshot)
 	kv.persister = persister
 
 	// You may need initialization code here.

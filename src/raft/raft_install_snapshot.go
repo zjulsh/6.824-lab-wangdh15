@@ -82,7 +82,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 			// if there is some entry between lastIncludeEntry and origin commitIndex
 			// need to recommit them
 			if args.LastIncludedIndex < rf.commitIdx {
-				for i := args.LastIncludedIndex; i <= rf.commitIdx; i++ {
+				for i := args.LastIncludedIndex + 1; i <= rf.commitIdx; i++ {
 					rf.commitQueue = append(rf.commitQueue, ApplyMsg{
 						CommandValid: true,
 						CommandIndex: i,

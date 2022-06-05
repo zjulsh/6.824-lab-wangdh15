@@ -291,7 +291,7 @@ func (kv *KVServer) process() {
 				Debug(dError, "S%d KVServer Process Unknown OP: %v", kv.me, op)
 			}
 			// check whether need to snapshot
-			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() >= 8*kv.maxraftstate {
+			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() >= 6*kv.maxraftstate {
 				snapshot := kv.serilizeState()
 				go kv.rf.Snapshot(command.CommandIndex, snapshot)
 				Debug(dSnap, "S%d KVServer Create Snapshot! IDX:%d, Snapshot:%v", kv.me, command.CommandIndex, snapshot)

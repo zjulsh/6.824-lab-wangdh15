@@ -86,7 +86,9 @@ func (ck *Clerk) Get(key string) string {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply GetReply
+				Debug(dCLGet, "S%d Send Get Request to Server:%s. args: %v", ck.id, servers[si], args)
 				ok := srv.Call("ShardKV.Get", &args, &reply)
+				Debug(dCLGet, "S%d Receive Get Reply from Server: %s. args: %v, reply: %v", ck.id, servers[si], args, reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					return reply.Value
 				}
@@ -99,6 +101,7 @@ func (ck *Clerk) Get(key string) string {
 		time.Sleep(100 * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		Debug(dCLConfig, "S%d Reset Cofnig to :%v", ck.id, ck.config)
 	}
 
 	return ""
@@ -124,7 +127,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 			for si := 0; si < len(servers); si++ {
 				srv := ck.make_end(servers[si])
 				var reply PutAppendReply
+				Debug(dCLPutAppend, "S%d Send PutAppend Request to Server: %s, args: %v", ck.id, servers[si], args)
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
+				Debug(dCLPutAppend, "S%d Receive PutAppend Reply from Server: %s. args: %v, reply: %v", ck.id, servers[si], args, reply)
 				if ok && reply.Err == OK {
 					return
 				}
@@ -137,6 +142,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		time.Sleep(100 * time.Millisecond)
 		// ask controler for the latest configuration.
 		ck.config = ck.sm.Query(-1)
+		Debug(dCLConfig, "S%d Reset Cofnig to :%v", ck.id, ck.config)
 	}
 }
 

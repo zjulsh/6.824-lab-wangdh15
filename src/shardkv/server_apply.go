@@ -6,6 +6,7 @@ func (kv *ShardKV) process_get(op Op) {
 	res := OpResult{}
 	if kv.allData[kv.cur_config.Num][shardId].Status != WORKING {
 		res.Error = ErrWrongLeader
+		return
 	} else {
 		if val, ok2 := kv.allData[kv.cur_config.Num][shardId].Data[op.Key]; ok2 {
 			res.Value = val
@@ -24,6 +25,7 @@ func (kv *ShardKV) process_put(op Op) {
 	res := OpResult{}
 	if kv.allData[kv.cur_config.Num][shardId].Status != WORKING {
 		res.Error = ErrWrongLeader
+		return
 	} else {
 		kv.allData[kv.cur_config.Num][shardId].Data[op.Key] = op.Value
 		res.Error = OK
@@ -38,12 +40,14 @@ func (kv *ShardKV) process_append(op Op) {
 	res := OpResult{}
 	if kv.allData[kv.cur_config.Num][shardId].Status != WORKING {
 		res.Error = ErrWrongLeader
+		return
 	} else {
 		if val, ok2 := kv.allData[kv.cur_config.Num][shardId].Data[op.Key]; ok2 {
 			kv.allData[kv.cur_config.Num][shardId].Data[op.Key] = val + op.Value
 		} else {
 			kv.allData[kv.cur_config.Num][shardId].Data[op.Key] = op.Value
 		}
+		res.Error = OK
 	}
 	kv.update(op, res)
 	kv.replyChan(op.ServerSeq, res)

@@ -81,9 +81,9 @@ func (kv *ShardKV) process_change_shard(op Op) {
 	if kv.cur_config.Num != op.NewShardCfgNum || kv.allData[kv.cur_config.Num][op.NewShardId].Status != ACQUING {
 		return
 	}
-	// set the shard and change the status
-	op.NewShard.Status = WORKING
-	kv.allData[kv.cur_config.Num][op.NewShardId] = op.NewShard
+	// set the shard and change the status]
+	kv.allData[kv.cur_config.Num][op.NewShardId] = op.NewShard.Copy()
+	kv.allData[kv.cur_config.Num][op.NewShardId].Status = WORKING
 	Debug(dKVShard, "S%d GID:%d chang shard!, cur_all_data: %v", kv.me, kv.gid, kv.allData[kv.cur_config.Num])
 }
 
@@ -113,16 +113,16 @@ func (kv *ShardKV) process() {
 			default:
 			}
 			// check whether need to snapshot
-			// if kv.maxraftstate != -1 && kv.persister.RaftStateSize() >= 6*kv.maxraftstate {
-			// 	snapshot := kv.serilizeState()
-			// 	go kv.rf.Snapshot(command.CommandIndex, snapshot)
-			// }
-		} // else if command.SnapshotValid {
-		// 	// update self state
-		// 	// kv.DeSerilizeState(command.Snapshot)
-		// } else {
-
-		// }
+			if kv.maxraftstate != -1 && 8*kv.maxraftstate-kv.persister.RaftStateSize() <= 500 {
+				snapshot := kv.serilizeState()
+				go kv.rf.Snapshot(command.CommandIndex, snapshot)
+			}
+		} else if command.SnapshotValid {
+			// update self state
+			kv.DeSerilizeState(command.Snapshot)
+		} else {
+			Debug(dError, "S%d GID:%d Applier Receive Unkonwn Command!, %v", kv.me, kv.gid, command)
+		}
 	}
 }
 

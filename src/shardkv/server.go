@@ -77,6 +77,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Op{})
 	labgob.Register(Shard{})
+	labgob.Register(CfgiData{})
+	labgob.Register(shardctrler.Config{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -100,6 +102,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		kv.allData[kv.cur_config.Num][i].Status = INVALID
 	}
 	kv.chans = make(map[int64]chan OpResult)
+	kv.DeSerilizeState(kv.persister.ReadSnapshot())
 
 	// 定期从Master拉取配置
 	go kv.PullConfig()

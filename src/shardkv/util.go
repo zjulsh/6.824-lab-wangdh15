@@ -23,6 +23,8 @@ const (
 	dKVConfig    logTopic = "KVCFG"
 	dKVShard     logTopic = "KVSHD"
 	dKVApply     logTopic = "KVAPLY"
+	dError       logTopic = "KVERROR"
+	dKVSnapshot  logTopic = "KVSNAPSHOT"
 )
 
 var debugStart time.Time

@@ -1,6 +1,11 @@
 package shardkv
 
-import "6.824/shardctrler"
+import (
+	"bytes"
+
+	"6.824/labgob"
+	"6.824/shardctrler"
+)
 
 //
 // Sharded key/value server.
@@ -139,38 +144,34 @@ type OpResult struct {
 	Value string
 }
 
-// func (kv *ShardKV) serilizeState() []byte {
-// 	// w := new(bytes.Buffer)
-// 	// e := labgob.NewEncoder(w)
-// 	// e.Encode(kv.data)
-// 	// kv.mu.Lock()
-// 	// e.Encode(kv.client_to_last_process_seq)
-// 	// e.Encode(kv.client_to_last_process_result)
-// 	// kv.mu.Unlock()
-// 	// return w.Bytes()
+func (kv *ShardKV) serilizeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.allData)
+	e.Encode(kv.last_config)
+	e.Encode(kv.cur_config)
+	return w.Bytes()
 
-// }
+}
 
 func (kv *ShardKV) DeSerilizeState(snapshot []byte) {
-	// if len(snapshot) == 0 {
-	// 	return
-	// }
-	// r := bytes.NewBuffer(snapshot)
-	// d := labgob.NewDecoder(r)
-	// var data map[string]string
-	// var client_to_last_process_seq map[int64]uint64
-	// var client_to_last_process_result map[int64]OpResult
-	// if d.Decode(&data) != nil ||
-	// 	d.Decode(&client_to_last_process_seq) != nil ||
-	// 	d.Decode(&client_to_last_process_result) != nil {
-	// 	Debug(dError, "S%d KVServer Read Persist Error!", kv.me)
-	// } else {
-	// 	kv.data = data
-	// 	kv.mu.Lock()
-	// 	kv.client_to_last_process_seq = client_to_last_process_seq
-	// 	kv.client_to_last_process_result = client_to_last_process_result
-	// 	kv.mu.Unlock()
-	// 	Debug(dPersist, "S%d KVServer ReadPersist. Data: %v, Seq: %v, Res: %v", kv.me,
-	// 		kv.data, kv.client_to_last_process_seq, kv.client_to_last_process_result)
-	// }
+	if len(snapshot) == 0 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var data []CfgiData
+	var last_config shardctrler.Config
+	var cur_config shardctrler.Config
+	if d.Decode(&data) != nil ||
+		d.Decode(&last_config) != nil ||
+		d.Decode(&cur_config) != nil {
+		Debug(dError, "S%d ShardKV Read Persist Error!", kv.me)
+	} else {
+		kv.allData = data
+		kv.last_config = last_config
+		kv.cur_config = cur_config
+		Debug(dKVSnapshot, "S%d KVServer ReadPersist. Data: %v, Seq: %v, Res: %v", kv.me,
+			kv.allData, kv.last_config, kv.cur_config)
+	}
 }

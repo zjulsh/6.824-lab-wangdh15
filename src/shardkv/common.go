@@ -189,6 +189,7 @@ func (kv *ShardKV) DeSerilizeState(snapshot []byte) {
 		d.Decode(&cur_config) != nil {
 		Debug(dError, "S%d ShardKV Read Persist Error!", kv.me)
 	} else {
+		kv.mu.Lock()
 		kv.allData = make([]CfgiData, begin_idx)
 		for i := 0; i < begin_idx; i++ {
 			for j := 0; j < shardctrler.NShards; j++ {
@@ -200,5 +201,6 @@ func (kv *ShardKV) DeSerilizeState(snapshot []byte) {
 		kv.cur_config = cur_config
 		Debug(dKVSnapshot, "S%d KVServer ReadPersist. Data: %v, Seq: %v, Res: %v", kv.me,
 			kv.allData, kv.last_config, kv.cur_config)
+		kv.mu.Unlock()
 	}
 }

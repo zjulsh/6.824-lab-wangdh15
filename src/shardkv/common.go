@@ -81,6 +81,7 @@ const (
 	CHANGE_CONFIG = "CHANGE_CONFIG"
 	GET_NEW_SHARD = "GET_NEW_SHARD"
 	CHANGE_SHARD  = "CHANGE_SHARD"
+	GC            = "GC"
 )
 
 type Shard struct {
@@ -134,6 +135,9 @@ type Op struct {
 	NewShardId     int
 	NewShard       Shard
 
+	GCCfgNum  int
+	GCShardID int
+
 	ClientId  int64
 	ClientSeq uint64
 	ServerSeq int64
@@ -147,7 +151,22 @@ type OpResult struct {
 func (kv *ShardKV) serilizeState() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.allData)
+	begin_idx := 0
+	for i := 0; i < kv.cur_config.Num-1; i++ {
+		flag := true
+		begin_idx = i
+		for j := 0; j < shardctrler.NShards; j++ {
+			if kv.allData[i][j].Status != INVALID {
+				flag = false
+				break
+			}
+		}
+		if !flag {
+			break
+		}
+	}
+	e.Encode(kv.allData[begin_idx:])
+	e.Encode(begin_idx)
 	e.Encode(kv.last_config)
 	e.Encode(kv.cur_config)
 	return w.Bytes()
@@ -161,14 +180,22 @@ func (kv *ShardKV) DeSerilizeState(snapshot []byte) {
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
 	var data []CfgiData
+	var begin_idx int
 	var last_config shardctrler.Config
 	var cur_config shardctrler.Config
 	if d.Decode(&data) != nil ||
+		d.Decode(&begin_idx) != nil ||
 		d.Decode(&last_config) != nil ||
 		d.Decode(&cur_config) != nil {
 		Debug(dError, "S%d ShardKV Read Persist Error!", kv.me)
 	} else {
-		kv.allData = data
+		kv.allData = make([]CfgiData, begin_idx)
+		for i := 0; i < begin_idx; i++ {
+			for j := 0; j < shardctrler.NShards; j++ {
+				kv.allData[i][j].Status = INVALID
+			}
+		}
+		kv.allData = append(kv.allData, data...)
 		kv.last_config = last_config
 		kv.cur_config = cur_config
 		Debug(dKVSnapshot, "S%d KVServer ReadPersist. Data: %v, Seq: %v, Res: %v", kv.me,

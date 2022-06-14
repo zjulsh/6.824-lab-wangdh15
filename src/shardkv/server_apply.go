@@ -85,6 +85,36 @@ func (kv *ShardKV) process_change_shard(op Op) {
 	kv.allData[kv.cur_config.Num][op.NewShardId] = op.NewShard.Copy()
 	kv.allData[kv.cur_config.Num][op.NewShardId].Status = WORKING
 	Debug(dKVShard, "S%d GID:%d chang shard!, cur_all_data: %v", kv.me, kv.gid, kv.allData[kv.cur_config.Num])
+	// send gc
+	go kv.sendGc(kv.last_config.Groups[kv.last_config.Shards[op.NewShardId]], kv.last_config.Num, op.NewShardId)
+}
+
+func (kv *ShardKV) process_gc(op Op) {
+	res := OpResult{}
+	// check config num
+	kv.mu.Lock()
+	if kv.cur_config.Num <= op.GCCfgNum {
+		kv.mu.Unlock()
+		res.Error = ErrWrongLeader
+		kv.replyChan(op.ServerSeq, res)
+		return
+	}
+	// check whether has been gced
+	if kv.allData[op.GCCfgNum][op.GCShardID].Status == INVALID {
+		res.Error = OK
+	} else if kv.allData[op.GCCfgNum][op.GCShardID].Status == EXPIRED {
+		kv.allData[op.GCCfgNum][op.GCShardID].Client_to_last_req = nil
+		kv.allData[op.GCCfgNum][op.GCShardID].Client_to_last_res = nil
+		kv.allData[op.GCCfgNum][op.GCShardID].Data = nil
+		kv.allData[op.GCCfgNum][op.GCShardID].Status = INVALID
+		res.Error = OK
+		Debug(dKVGC, "S%d GID:%d GC! CFGNUM: %d, SHARDNUM: %d. new all data: %v", kv.me, kv.gid, op.GCCfgNum, op.GCShardID, kv.allData)
+	} else {
+		res.Error = ErrWrongLeader
+		Debug(dError, "S%d GID:%d GC Err!", kv.me, kv.gid)
+	}
+	kv.mu.Unlock()
+	kv.replyChan(op.ServerSeq, res)
 }
 
 func (kv *ShardKV) process() {
@@ -110,12 +140,15 @@ func (kv *ShardKV) process() {
 				kv.process_change_config(op)
 			case CHANGE_SHARD:
 				kv.process_change_shard(op)
+			case GC:
+				kv.process_gc(op)
 			default:
 			}
 			// check whether need to snapshot
 			if kv.maxraftstate != -1 && 8*kv.maxraftstate-kv.persister.RaftStateSize() <= 500 {
+				Debug(dKVSnapshot, "S%d GID:%d SnapShot!, cur_data: %v", kv.me, kv.gid, kv.allData)
 				snapshot := kv.serilizeState()
-				go kv.rf.Snapshot(command.CommandIndex, snapshot)
+				kv.rf.Snapshot(command.CommandIndex, snapshot)
 			}
 		} else if command.SnapshotValid {
 			// update self state

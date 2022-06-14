@@ -59,6 +59,10 @@ func (kv *ShardKV) ResetStatus() {
 			kv.allData[kv.cur_config.Num][i].Status = INVALID
 		} else if kv.last_config.Shards[i] == kv.gid && kv.cur_config.Shards[i] == kv.gid {
 			kv.allData[kv.cur_config.Num][i] = kv.allData[kv.last_config.Num][i].Copy()
+			kv.allData[kv.last_config.Num][i].Client_to_last_req = nil
+			kv.allData[kv.last_config.Num][i].Client_to_last_res = nil
+			kv.allData[kv.last_config.Num][i].Data = nil
+			kv.allData[kv.last_config.Num][i].Status = INVALID
 		} else {
 			kv.allData[kv.cur_config.Num][i].Status = INVALID
 		}

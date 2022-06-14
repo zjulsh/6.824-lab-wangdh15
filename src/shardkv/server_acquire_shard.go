@@ -61,6 +61,11 @@ func (kv *ShardKV) AcquireShard(args *GetShardArgs, reply *GetShardReply) {
 		reply.Error = ErrWrongLeader
 		return
 	}
-	reply.Shard = kv.allData[args.ConfigNum][args.ShardId].Copy()
+	// need to check, because the data may be gced
+	// when it is been gced, means this data has been received by other servers.
+	// so this is a out ot date gc, reply ok is fine.
+	if kv.allData[args.ConfigNum][args.ShardId].Status == EXPIRED {
+		reply.Shard = kv.allData[args.ConfigNum][args.ShardId].Copy()
+	}
 	reply.Error = OK
 }
